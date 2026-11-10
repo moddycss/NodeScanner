@@ -2,7 +2,7 @@
 -- The actual minimap scanning lives in Scanner.lua.
 
 local ADDON_NAME, ns = ...
-ns.VERSION = "0.9.2"
+ns.VERSION = "1.0.0"
 
 ns.defaults = {
     shown         = true,   -- main window visible
