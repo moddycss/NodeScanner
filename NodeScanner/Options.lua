@@ -192,6 +192,8 @@ local function BuildPanel()
     Header(panel, "Pause", R, -626)
     Check(panel, "Mouse at minimap", "pauseAtMinimap", R - 4, -644)
     Check(panel, "Rested areas", "pauseResting", R + 126, -644)
+    Check(panel, "Mouse over interface", "pauseUI", R - 4, -668)
+    Check(panel, "Windows open", "pauseWindows", R + 126, -668)
 
     -- Third column: tracking table. One line per tracking type:
     --   [x] Type (Track)      [x] (Scan together)

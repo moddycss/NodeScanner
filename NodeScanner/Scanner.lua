@@ -333,6 +333,7 @@ runner:SetScript("OnUpdate", function()
         or (InCombatLockdown() and not ns.db.scanInCombat) and "combat"
         or IsMouselooking() and "camera turned with the mouse"
         or (IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton")) and "mouse button pressed"
+        or (ns.db.pauseWindows and ns.WindowOpen()) and "a window opened"
     if why then return Stop(false, "aborted (" .. why .. ")") end
     local ok, err = pcall(function()
         j.frames = j.frames + 1
@@ -623,6 +624,44 @@ function ns.PausedWhere()
     if db.pauseResting and IsResting() then return "rested area" end
 end
 
+-- Is the mouse over a piece of the interface (a button, a window, a tooltip...)?
+-- Moving the minimap under the cursor would take the mouse away from it, so its
+-- tooltip would vanish ("OnLeave") - wait until you are back over the world.
+function ns.MouseOverUI()
+    local foci
+    if GetMouseFoci then foci = GetMouseFoci()
+    elseif GetMouseFocus then foci = { GetMouseFocus() } end
+    for _, f in ipairs(foci or {}) do
+        if f and f ~= WorldFrame and f ~= mm then
+            local name = f.GetDebugName and f:GetDebugName() or (f.GetName and f:GetName()) or "?"
+            return true, name
+        end
+    end
+    return false
+end
+
+-- Is one of the game's windows open (talents, flight map, spellbook, character ...)?
+local EXTRA_WINDOWS = { "TaxiFrame", "FlightMapFrame", "WorldMapFrame", "MerchantFrame",
+                        "GossipFrame", "QuestFrame", "MailFrame", "AuctionHouseFrame",
+                        "PlayerTalentFrame", "ClassTalentFrame", "PlayerSpellsFrame",
+                        "SettingsPanel", "GameMenuFrame", "TradeSkillFrame", "ProfessionsFrame" }
+function ns.WindowOpen()
+    local found
+    pcall(function()
+        for _, name in ipairs(EXTRA_WINDOWS) do
+            local f = _G[name]
+            if f and f.IsShown and f:IsShown() then found = name; return end
+        end
+        if type(UIPanelWindows) == "table" then
+            for name in pairs(UIPanelWindows) do
+                local f = _G[name]
+                if f and f.IsShown and f:IsShown() then found = name; return end
+            end
+        end
+    end)
+    return found
+end
+
 local function CanScan()
     if job then return false, "already scanning" end
     local where = ns.PausedWhere()
@@ -641,6 +680,17 @@ local function CanScan()
     -- Don't move the minimap under the cursor while you are about to click something
     if GameTooltip:IsShown() and GameTooltip:GetOwner() == UIParent and GameTooltip:GetAlpha() > 0 then
         return false, "mouse is over something in the world"
+    end
+    if ns.db.pauseWindows then
+        local w = ns.WindowOpen()
+        if w then return false, "a window is open (" .. w .. ")" end
+    end
+    if ns.db.pauseUI then
+        local over, what = ns.MouseOverUI()
+        if over then return false, "mouse is over the interface (" .. tostring(what) .. ")" end
+        if GameTooltip:IsShown() and GameTooltip:GetAlpha() > 0 then
+            return false, "a tooltip is shown"
+        end
     end
     if ns.db.pauseYards > 0 then
         local _, px, py = ns.GetPlayerYards()
