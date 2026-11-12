@@ -222,6 +222,72 @@ local ev = CreateFrame("Frame")
 pcall(ev.RegisterEvent, ev, "MAP_EXPLORATION_UPDATED")     -- may not exist on every client
 ev:SetScript("OnEvent", function() currentMap = nil end)
 
+-- Border: copy the real minimap's own border textures (ring, compass marker ...) onto the
+-- stand-in map, same texture, size and position. Only large textures are copied (at least
+-- 60 % of the minimap's width), so small buttons and icons are left out.
+local border, borderTex = nil, {}
+local function CloneBorder()
+    if not border then
+        border = CreateFrame("Frame", nil, frame)
+        border:SetAllPoints(frame)
+    end
+    border:SetFrameLevel(frame:GetFrameLevel() + 5)
+    for _, t in ipairs(borderTex) do t:Hide() end
+    local l0, b0, w0 = Minimap:GetRect()
+    if not l0 then return end
+    local uiS = UIParent:GetEffectiveScale()
+    local k0 = Minimap:GetEffectiveScale() / uiS
+    l0, b0, w0 = l0 * k0, b0 * k0, w0 * k0
+    local n, seen = 0, {}
+
+    local function Copy(region)
+        if seen[region] then return end
+        seen[region] = true
+        local ok = pcall(function()
+            if region:GetObjectType() ~= "Texture" or not region:IsShown() then return end
+            local l, b, w, h = region:GetRect()
+            if not l then return end
+            local k = region:GetEffectiveScale() / uiS
+            l, b, w, h = l * k, b * k, w * k, h * k
+            if w < w0 * 0.6 then return end                    -- not a border: skip
+            local atlas = region.GetAtlas and region:GetAtlas()
+            local tex = region:GetTexture()
+            if not atlas and not tex then return end
+            n = n + 1
+            local c = borderTex[n]
+            if not c then
+                c = border:CreateTexture(nil, "ARTWORK")
+                borderTex[n] = c
+            end
+            local layer, sub = region:GetDrawLayer()
+            c:SetDrawLayer(layer or "ARTWORK", sub or 0)
+            if atlas then c:SetAtlas(atlas) else c:SetTexture(tex) end
+            c:SetTexCoord(region:GetTexCoord())
+            c:SetVertexColor(region:GetVertexColor())
+            c:SetAlpha(region:GetAlpha())
+            c:SetBlendMode(region:GetBlendMode())
+            c:ClearAllPoints()
+            c:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", l - l0, b - b0)
+            c:SetSize(w, h)
+            c:Show()
+        end)
+        if not ok then return end
+    end
+    local function Walk(f, depth)
+        if not f or (f.IsForbidden and f:IsForbidden()) then return end
+        local name = f.GetName and f:GetName()
+        if name and name:find("^NodeScanner") then return end   -- not our own button
+        for _, r in ipairs({ f:GetRegions() }) do Copy(r) end
+        if depth > 0 then
+            for _, c in ipairs({ f:GetChildren() }) do
+                if c:IsShown() then Walk(c, depth - 1) end
+            end
+        end
+    end
+    pcall(Walk, Minimap, 3)
+    border:SetShown(ns.db.underlayBorder)
+end
+
 -- Called by the scanner BEFORE it moves the real minimap: take its exact place
 function ns.UnderlayShow()
     if not ns.db.underlay then return end
@@ -235,6 +301,7 @@ function ns.UnderlayShow()
     frame:SetFrameStrata(Minimap:GetFrameStrata())
     frame:SetFrameLevel(math.max(0, Minimap:GetFrameLevel() - 1))
     label:SetShown(ns.db.scanLabel)
+    ns.SafeCall(CloneBorder)          -- before the minimap's own border is hidden
     ns.SafeCall(Update)
     frame:Show()
     updater:Show()
@@ -252,6 +319,7 @@ function ns.UnderlayTest()
     frame:SetFrameStrata("HIGH")
     label:SetText("Stand-in map (test)")
     label:Show()
+    ns.SafeCall(CloneBorder)
     ns.SafeCall(Update)
     frame:Show()
     updater:Show()

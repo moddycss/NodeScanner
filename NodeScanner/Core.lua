@@ -2,7 +2,7 @@
 -- The actual minimap scanning lives in Scanner.lua.
 
 local ADDON_NAME, ns = ...
-ns.VERSION = "1.1.8.0"   -- WoWpatch.Release.Major.Minor
+ns.VERSION = "1.1.8.1"   -- WoWpatch.Release.Major.Minor
 
 ns.defaults = {
     shown         = true,   -- main window visible
@@ -41,7 +41,8 @@ ns.defaults = {
     creatureExpire = 45,    -- seconds a mob/NPC stays in the list without being seen again
     muteSwap      = true,   -- mute the switch sound
     minimapTerrain = true,  -- stand-in map uses the real minimap terrain images
-    underlay      = true,   -- show a stand-in map where the minimap is while it scans
+    underlay      = true,
+    underlayBorder = true,  -- copy the minimap's border onto the stand-in map   -- show a stand-in map where the minimap is while it scans
     scanLabel     = true,   -- "Scanning for nodes" above the minimap while scanning
     exact         = false,  -- measure exact node positions (slower); off = rough is enough
       -- seconds; a scan never runs longer than this    -- max reads spent looking for one new node before giving up

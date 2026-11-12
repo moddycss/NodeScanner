@@ -160,7 +160,8 @@ local function BuildPanel()
     Check(panel, "Stand-in map while scanning", "underlay", L, -428)
     Check(panel, "\"Scanning for nodes\" label", "scanLabel", L, -454)
     Check(panel, "Stand-in map uses minimap terrain", "minimapTerrain", L, -480)
-    Check(panel, "Mute the tracking switch sound", "muteSwap", L, -506)
+    Check(panel, "Stand-in map border", "underlayBorder", L, -506)
+    Check(panel, "Mute the tracking switch sound", "muteSwap", L, -532)
 
     -- Right column: sliders
     local R = 340
