@@ -1,3 +1,5 @@
+<p align="center"><img src="NodeScanner-logo.png" width="160" alt="Node Scanner logo"></p>
+
 # Node Scanner
 
 A World of Warcraft: Forever addon that shows the gathering nodes on your minimap
