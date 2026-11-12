@@ -162,6 +162,8 @@ local function BuildPanel()
     Check(panel, "Stand-in map uses minimap terrain", "minimapTerrain", L, -480)
     Check(panel, "Stand-in map border", "underlayBorder", L, -506)
     Check(panel, "Mute the tracking switch sound", "muteSwap", L, -532)
+    Check(panel, "Always use the stand-in map", "replaceMinimap", L, -564, function() ns.ApplyMapMode() end)
+    Note(panel, "Hides the real minimap for good (no swapping). Town icons like mailbox and auctioneer can't be shown. Real minimap in caves and where there's no terrain.", L + 4, -592)
 
     -- Right column: sliders
     local R = 340

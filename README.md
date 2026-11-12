@@ -36,7 +36,13 @@ out, or standing next to a node so you can click it.
 - **Stand-in map:** while a scan has the real minimap away, a round map with the same
   border shows in its place - the real minimap terrain on Eastern Kingdoms and Kalimdor
   (world map art elsewhere), your arrow, node dots (treasure green, mobs red) and a
-  "Scanning for nodes" label
+  "Scanning for nodes" label. The minimap's buttons, sun/moon and coordinates are copied
+  onto it, so the swap is hard to notice
+- **Always use the stand-in map (option):** the real minimap is hidden for good and the
+  stand-in map is shown all the time - no swapping. Tooltips, clicks, zoom and the minimap
+  buttons still work. Town icons (mailbox, auctioneer ...) can't be shown, because the game
+  doesn't tell addons where they are. In caves and outside Eastern Kingdoms/Kalimdor the
+  real minimap is used
 - **All tracking types:** herbs, ore, treasure, beasts, humanoids, undead, demons,
   elementals, giants, dragonkin, hidden. Types your character doesn't have are greyed out.
   Node Scanner switches tracking between the ticked types (one per scan, or several

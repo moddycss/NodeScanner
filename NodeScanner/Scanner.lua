@@ -175,6 +175,7 @@ local function MinimapOverlays()
     overlayCache, overlayCacheTime = list, GetTime()
     return list
 end
+ns.MinimapOverlays = MinimapOverlays
 
 local function Prepare(alpha)
     if saved then return end

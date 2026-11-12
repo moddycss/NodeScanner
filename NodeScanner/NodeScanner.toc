@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## Title: Node Scanner
 ## Notes: Shows the nearest gathering nodes from the minimap with distance and an arrow.
-## Version: 1.2.0.1
+## Version: 1.2.1.0
 ## SavedVariables: NodeScannerDB
 
 Core.lua
