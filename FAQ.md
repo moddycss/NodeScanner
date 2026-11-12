@@ -49,7 +49,7 @@ know *which way to go and roughly how far*, and the rough position answers that.
 get closer, the distance becomes more precise, and hovering a dot on the real minimap
 gives the exact spot at once.
 
-If you want exact positions anyway, tick **Measure exact positions** in the settings.
+If you want exact positions anyway, tick **Measure exact positions (slower)** in the settings.
 
 ### Why does it only scan every 10 seconds, and why can't a scan be faster?
 
@@ -71,15 +71,15 @@ Because moving the minimap under your cursor takes the mouse away from whatever 
 pointing at. Clicks could land on the minimap, and the game would close the tooltip you
 were reading. So Node Scanner waits when:
 
-- you are **in combat** (optional)
+- you are **in combat** (unless **Also scan in combat** is ticked)
 - you **hold a mouse button** or **turn the camera**
 - the mouse is **at the minimap**, so you can use it normally
 - the mouse is **over the interface**, a **tooltip is shown**, or a **game window is open**
   (talents, spellbook, flight master map, merchant, mailbox ...)
 - you are **standing next to a node**, so you can click it
 - the game **isn't in focus** (tabbed out)
-- you are in a **dungeon, raid, battleground, arena or indoors** (each optional), and
-  optionally in **rested areas**
+- you are in a **dungeon, raid, battleground, arena or indoors** (unless ticked under
+  **Also scan in**), and in **rested areas** if you turn that on
 
 The window title shows why it's paused, e.g. "paused (a window is open)". Each pause can
 be turned off in the settings.

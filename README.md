@@ -8,6 +8,8 @@ pointing towards each one.
 
 *Created with the help of AI (Claude).*
 
+Questions like "why does the minimap move?" are answered in the [FAQ](FAQ.md).
+
 ```
 Gathering Nodes
 Copper Vein     ~58  ↗
