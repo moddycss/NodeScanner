@@ -35,7 +35,7 @@ local function Build()
     labelFrame:SetAllPoints(frame)
     frame.labelFrame = labelFrame                            -- kept above the copied ring
     label = labelFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    label:SetPoint("BOTTOM", frame, "TOP", 0, 4)
+    label:SetPoint("BOTTOM", frame, "TOP", 0, 16)   -- above the compass marker on the ring
     label:SetText("Scanning for nodes")
 end
 
