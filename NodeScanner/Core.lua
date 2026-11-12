@@ -2,7 +2,7 @@
 -- The actual minimap scanning lives in Scanner.lua.
 
 local ADDON_NAME, ns = ...
-ns.VERSION = "1.0.0"
+ns.VERSION = "1.2.0.0"   -- WoWpatch.Release.Major.Minor
 
 ns.defaults = {
     shown         = true,   -- main window visible
@@ -15,15 +15,35 @@ ns.defaults = {
     cluster       = 30,     -- hits of the same name closer than this (minimap units) = one node
     autoScan      = true,   -- scan automatically every <interval> seconds
     scanInCombat  = false,
+    scanDungeon   = false,  -- "Also scan in ..." (off = pause there)
+    scanRaid      = false,
+    scanBattleground = false,
+    scanArena     = false,
+    scanIndoors   = false,
+    pauseAtMinimap = true,  -- pause while the mouse is at the minimap
+    pauseResting  = false,  -- pause in rested areas (inns, cities)
     hideQuestAreas = true,  -- turn quest areas off during a scan (they ignore opacity)
     alwaysLocate  = false,  -- run the grid even when the quick check found nothing (debug)
     scanAlpha     = 0,      -- minimap opacity while scanning (Minimap Alert uses 0)
     dwell         = 2,      -- frames to wait at each scan point before reading
+    -- (hitPx, cluster: settings of the old scan method, no longer used)
     hitPx         = 6,      -- grid step in screen pixels when looking for a new node (Minimap Alert uses 6)
     pauseYards    = 10,     -- no scanning this close to a known node, so you can click it
     nodeBudget    = 200,
     maxScanTime   = 2,
     mergeYards    = 30,     -- nodes of the same name closer than this are the same node
+    swapTracking  = true,   -- (kept for older settings)
+    -- "Track" row (trackX) and "Scan together" row (togetherX) - see TRACKERS below.
+    -- Herbs/ore/treasure are on by default, creature types off.
+    trackHerb     = true,
+    trackOre      = true,
+    trackTreasure = true,   -- keeps Find Treasure on (it stacks with herbs/ore)
+    creatureExpire = 45,    -- seconds a mob/NPC stays in the list without being seen again
+    muteSwap      = true,   -- mute the switch sound
+    minimapTerrain = true,  -- stand-in map uses the real minimap terrain images
+    underlay      = true,
+    underlayBorder = true,  -- copy the minimap's border onto the stand-in map   -- show a stand-in map where the minimap is while it scans
+    scanLabel     = true,   -- "Scanning for nodes" above the minimap while scanning
     exact         = false,  -- measure exact node positions (slower); off = rough is enough
       -- seconds; a scan never runs longer than this    -- max reads spent looking for one new node before giving up
     trackingWarning = true, -- warn when Find Minerals / Find Herbs / Find Treasure is off
@@ -113,6 +133,10 @@ local NODE_ITEM = {
 -- Used only until the game has loaded the item (1 = common/white, 2 = uncommon/green)
 local FALLBACK_QUALITY = { [2775] = 2, [2776] = 2, [7911] = 2 }
 
+function ns.NodeItem(name)
+    return NODE_ITEM[name:lower():gsub("^ooze covered ", "")]
+end
+
 local qualityCache = {}
 function ns.NodeColor(name)
     local key = name:lower():gsub("^ooze covered ", "")
@@ -181,12 +205,35 @@ end
 ----------------------------------------------------------------------
 -- Gathering tracking (Find Minerals / Find Herbs / Find Treasure)
 ----------------------------------------------------------------------
+-- Every tracking type Node Scanner can use.
+--   key      = settings suffix (trackX / togetherX)
+--   spells   = all spells that give this tracking (class versions count as the same type)
+--   stacks   = can be on together with another tracking (Find Treasure on Forever)
+--   creature = dots are NPCs/mobs (grouped by name in the window)
 local TRACKERS = {
-    { kind = "ore",      spell = 2580, name = "Find Minerals" },
-    { kind = "herb",     spell = 2383, name = "Find Herbs" },
-    { kind = "treasure", spell = 2481, name = "Find Treasure" },
+    { kind = "herb",      key = "Herb",       label = "Herbs",      spells = { 2383 },        names = { "Find Herbs" } },
+    { kind = "ore",       key = "Ore",        label = "Ore",        spells = { 2580 },        names = { "Find Minerals" } },
+    { kind = "treasure",  key = "Treasure",   label = "Treasure",   spells = { 2481 },        names = { "Find Treasure" }, stacks = true },
+    { kind = "beast",     key = "Beasts",     label = "Beasts",     spells = { 1494 },        names = { "Track Beasts" },     creature = true },
+    { kind = "humanoid",  key = "Humanoids",  label = "Humanoids",  spells = { 19883, 5225 }, names = { "Track Humanoids" },  creature = true },
+    { kind = "undead",    key = "Undead",     label = "Undead",     spells = { 19884, 5502 }, names = { "Track Undead", "Sense Undead" }, creature = true },
+    { kind = "demon",     key = "Demons",     label = "Demons",     spells = { 19878, 5500 }, names = { "Track Demons", "Sense Demons" }, creature = true },
+    { kind = "elemental", key = "Elementals", label = "Elementals", spells = { 19880 },       names = { "Track Elementals" }, creature = true },
+    { kind = "giant",     key = "Giants",     label = "Giants",     spells = { 19882 },       names = { "Track Giants" },     creature = true },
+    { kind = "dragonkin", key = "Dragonkin",  label = "Dragonkin",  spells = { 19879 },       names = { "Track Dragonkin" },  creature = true },
+    { kind = "hidden",    key = "Hidden",     label = "Hidden",     spells = { 19885 },       names = { "Track Hidden" },     creature = true },
 }
 ns.TRACKERS = TRACKERS
+ns.TRACKER = {}
+for _, tr in ipairs(TRACKERS) do ns.TRACKER[tr.kind] = tr end
+
+function ns.IsCreatureKind(kind) return kind and ns.TRACKER[kind] and ns.TRACKER[kind].creature or false end
+
+-- Is this kind shown in the window? (creatures: always; nodes: the Show nodes ticks)
+function ns.ShowKind(kind)
+    if ns.IsCreatureKind(kind) then return true end
+    return ns.db[ns.KIND_KEY[kind] or "showHerb"]
+end
 
 local trackCache, trackTime = nil, 0
 function ns.GatherTracking()
@@ -203,7 +250,10 @@ function ns.GatherTracking()
             end
             if not ns.IsSecret(name) then
                 for _, tr in ipairs(TRACKERS) do
-                    if spellID == tr.spell or name == tr.name then
+                    local match = false
+                    for _, id in ipairs(tr.spells) do if spellID == id then match = true end end
+                    for _, n in ipairs(tr.names) do if name == n then match = true end end
+                    if match then
                         t.known[tr.kind] = true
                         t.index[tr.kind] = i
                         t.names[tr.kind] = name
@@ -221,13 +271,14 @@ end
 function ns.MissingTracking()
     local t = ns.GatherTracking()
     local anyKnown = false
+    -- Any non-stacking tracking that is on (herbs, ore, or a creature type from the
+    -- rotation) is fine - Node Scanner itself switches between them
     for _, tr in ipairs(TRACKERS) do
-        if t.known[tr.kind] then
+        if t.known[tr.kind] and t.active[tr.kind] and not tr.stacks then return nil end
+    end
+    for _, tr in ipairs(TRACKERS) do
+        if t.known[tr.kind] and (tr.kind == "herb" or tr.kind == "ore" or tr.kind == "treasure") then
             anyKnown = true
-            if t.active[tr.kind] and tr.kind ~= "treasure" then
-                ns.db.lastTracking = tr.kind
-                return nil
-            end
         end
     end
     if not anyKnown then return nil end
@@ -304,6 +355,14 @@ ev:SetScript("OnEvent", function(self, _, name)
     ns.db = db
 
     for _, fn in ipairs(ns.initHooks) do ns.SafeCall(fn) end
+    -- Sound effects left muted by a tracking switch that was interrupted (/reload, crash)
+    if db.sfxMuted then SetCVar("Sound_EnableSFX", "1"); db.sfxMuted = nil end
+    -- Quest areas left off by an earlier scan (crash, /reload mid-scan, or v0.6.1): turn back on.
+    -- "fixQuestOnce" also turns them on once for everyone updating from older versions.
+    if not db.fixQuestOnce then db.questPending = true; db.fixQuestOnce = true end
+    if db.questPending then
+        C_Timer.After(2, function() ns.SafeCall(function() ns.RestoreQuestAreas() end) end)
+    end
     ns.RestartTicker()
 
     local version, build, _, toc = GetBuildInfo()
@@ -329,6 +388,8 @@ SlashCmdList.NODESCANNER = function(msg)
     elseif cmd == "reset" then
         if ns.RestoreMinimap then ns.RestoreMinimap() end
         print("|cff33ff99Node Scanner|r: minimap put back.")
+    elseif cmd == "maptest" then
+        ns.UnderlayTest()
     elseif cmd == "status" then
         ns.PrintStatus()
         ns.ToggleDebug()
@@ -345,6 +406,6 @@ SlashCmdList.NODESCANNER = function(msg)
     elseif cmd == "" then
         ns.ToggleWindow()
     else
-        print("|cff33ff99Node Scanner|r commands: /nscan (window), /nscan options, /nscan debug, /nscan scan, /nscan status, /nscan reset, /nscan button, /nscan add <name> [herb|ore|treasure]")
+        print("|cff33ff99Node Scanner|r commands: /nscan (window), /nscan options, /nscan debug, /nscan scan, /nscan status, /nscan reset, /nscan maptest, /nscan button, /nscan add <name> [herb|ore|treasure]")
     end
 end

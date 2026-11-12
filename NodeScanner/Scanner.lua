@@ -72,16 +72,37 @@ local function GetIconScale()
     end
 end
 
-local function QuestTrackingIndex()
+-- Index of the "quest areas" entry in the tracking menu, and whether it is on
+local function QuestTracking()
     local filter = Enum and Enum.MinimapTrackingFilter and Enum.MinimapTrackingFilter.QuestPOIs
     if not (filter and C_Minimap.GetNumTrackingTypes and C_Minimap.GetTrackingFilter) then return end
     for i = 1, C_Minimap.GetNumTrackingTypes() do
         local f = C_Minimap.GetTrackingFilter(i)
         if f and f.filterID == filter then
-            local info = C_Minimap.GetTrackingInfo(i)
-            if info and info.active then return i end
-            return
+            local a, _, c = C_Minimap.GetTrackingInfo(i)
+            local active = (type(a) == "table") and a.active or c
+            return i, active and true or false
         end
+    end
+end
+
+-- Turn quest areas back on, and check that it really happened (retry a few times).
+-- db.questPending survives a crash or /reload, so they always come back.
+function ns.RestoreQuestAreas(tries)
+    tries = tries or 5
+    local i, active = QuestTracking()
+    if not i then return end
+    if active then
+        ns.db.questPending = nil
+        return
+    end
+    pcall(C_Minimap.SetTracking, i, true)
+    if tries > 1 then
+        C_Timer.After(0.3, function() ns.RestoreQuestAreas(tries - 1) end)
+    else
+        local _, ok = QuestTracking()
+        if ok then ns.db.questPending = nil
+        else ns.Log("WARN", "Could not turn quest areas back on - use the minimap tracking menu") end
     end
 end
 
@@ -157,6 +178,8 @@ end
 
 local function Prepare(alpha)
     if saved then return end
+    -- Put the stand-in map in the minimap's place before the minimap moves away
+    if ns.UnderlayShow then pcall(ns.UnderlayShow) end
     local s = {
         points = {}, children = {}, regions = {},
         strata = mm:GetFrameStrata(), level = mm:GetFrameLevel(),
@@ -165,6 +188,13 @@ local function Prepare(alpha)
         ttOwner = GameTooltip:IsShown() and GameTooltip:GetOwner() or nil,
     }
     for i = 1, mm:GetNumPoints() do s.points[i] = { mm:GetPoint(i) } end
+    do
+        local l, b, w, h = mm:GetRect()
+        if l then
+            local k = mm:GetEffectiveScale() / UIParent:GetEffectiveScale()
+            s.home = { l * k, b * k, w * k, h * k }
+        end
+    end
     saved = s
 
     mm:SetFrameStrata("TOOLTIP")
@@ -193,9 +223,13 @@ local function Prepare(alpha)
         s.iconScale = GetIconScale()
         if s.iconScale then mm:SetIconScale(0) end
     end
-    if ns.db.hideQuestAreas then
-        s.questTracking = QuestTrackingIndex()
-        if s.questTracking then C_Minimap.SetTracking(s.questTracking, false) end
+    if ns.db.hideQuestAreas and not ns.db.questPending then
+        local i, active = QuestTracking()
+        if i and active then
+            ns.db.questPending = true                    -- remember to turn them back on
+            s.questTracking = i
+            C_Minimap.SetTracking(i, false)
+        end
     end
     s.overlays = {}
     local okList, overlays = pcall(MinimapOverlays)
@@ -228,8 +262,9 @@ local function Restore()
     for _, c in ipairs(s.children or {}) do pcall(c.Show, c) end
     for _, r in ipairs(s.regions or {}) do pcall(r.Show, r) end
     try(function() if s.iconScale then mm:SetIconScale(s.iconScale) end end)
-    try(function() if s.questTracking then C_Minimap.SetTracking(s.questTracking, true) end end)
+    if s.questTracking then try(function() ns.RestoreQuestAreas() end) end
     for _, o in ipairs(s.overlays or {}) do pcall(o.Show, o) end
+    if ns.UnderlayHide then pcall(ns.UnderlayHide) end
     muteTooltip = false
     try(function()
         if GameTooltip:IsShown() then
@@ -293,7 +328,8 @@ end
 runner:SetScript("OnUpdate", function()
     local j = job
     if not j then runner:Hide(); return end
-    local why = (InCombatLockdown() and not ns.db.scanInCombat) and "combat"
+    local why = (ns.db.pauseAtMinimap and ns.MouseNearMinimap()) and "mouse moved to the minimap"
+        or (InCombatLockdown() and not ns.db.scanInCombat) and "combat"
         or IsMouselooking() and "camera turned with the mouse"
         or (IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton")) and "mouse button pressed"
     if why then return Stop(false, "aborted (" .. why .. ")") end
@@ -463,6 +499,29 @@ local function StoreResults(hits, radius, half, confirmed, blind)
     return #clusters
 end
 
+-- Is the mouse on (or close to) the minimap's normal place, or the area around it?
+-- Then you want to use the real minimap: no scanning.
+local HOME_MARGIN = 25          -- UI units around the minimap
+function ns.MouseNearMinimap()
+    local home = saved and saved.home
+    if not home then
+        local l, b, w, h = mm:GetRect()
+        if not l then return false end
+        local k = mm:GetEffectiveScale() / UIParent:GetEffectiveScale()
+        home = { l * k, b * k, w * k, h * k }
+    end
+    local x, y = GetCursorPosition()
+    local s = UIParent:GetEffectiveScale()
+    x, y = x / s, y / s
+    if x >= home[1] - HOME_MARGIN and x <= home[1] + home[3] + HOME_MARGIN
+        and y >= home[2] - HOME_MARGIN and y <= home[2] + home[4] + HOME_MARGIN then
+        return true
+    end
+    -- zone name, clock, tracking button etc. (the cluster itself does not move)
+    if MinimapCluster and MinimapCluster:IsVisible() and MinimapCluster:IsMouseOver() then return true end
+    return false
+end
+
 -- Is the game window probably not in focus (tabbed out / mouse outside the window)?
 local function GameUnfocused()
     -- 1. When the mouse leaves the window, WoW keeps the cursor stuck at the window edge
@@ -481,8 +540,93 @@ local function GameUnfocused()
     return false
 end
 
+-- Switch tracking (only one of Find Herbs / Find Minerals can be on; Find Treasure stacks).
+-- Other addons (Forager, Tracking Eye, DualTrack ...) do the same on Forever. The switch
+-- plays a sound, so sound effects are muted for a moment around it.
+function ns.SwitchTracking(kind)
+    if InCombatLockdown() or UnitIsDeadOrGhost("player") then return end
+    local mute = ns.db.muteSwap and GetCVar("Sound_EnableSFX") == "1"
+    if mute then
+        ns.db.sfxMuted = true                     -- so a /reload right now can't leave it off
+        SetCVar("Sound_EnableSFX", "0")
+    end
+    ns.EnableTracking(kind)
+    if mute then
+        C_Timer.After(0.5, function()
+            SetCVar("Sound_EnableSFX", "1")
+            ns.db.sfxMuted = nil
+        end)
+    end
+end
+
+-- What this scan covers:
+--   parts      = the tracking types scanned one after another in THIS scan
+--   rotateTo   = with one type per scan: the type to switch to for the next scan
+--   treasureOn = turn Find Treasure on first (it stacks with herbs/ore)
+function ns.ScanPlan()
+    local db, t = ns.db, ns.GatherTracking()
+    local plan = { parts = {} }
+    plan.treasureOn = db.trackTreasure and t.known.treasure and not t.active.treasure
+
+    -- ticked under "Track", known by this character, and not a stacking type
+    local enabled, current = {}, nil
+    for _, tr in ipairs(ns.TRACKERS) do
+        if not tr.stacks and t.known[tr.kind] then
+            if db["track" .. tr.key] then enabled[#enabled + 1] = tr.kind end
+            if t.active[tr.kind] then current = tr.kind end
+        end
+    end
+    if #enabled == 0 then
+        plan.parts[1] = current or (t.known.treasure and "treasure") or false
+        return plan
+    end
+
+    local together = {}
+    for _, k in ipairs(enabled) do
+        if db["together" .. ns.TRACKER[k].key] then together[#together + 1] = k end
+    end
+    if #together >= 2 then
+        -- several types in one scan: start with the one that is on already
+        table.sort(together, function(x, y) return x == current and y ~= current end)
+        plan.parts = together
+    else
+        -- one type per scan, rotating through the ticked "Track" types
+        local now = current
+        local found = false
+        for _, k in ipairs(enabled) do if k == now then found = true end end
+        if not found then now = enabled[1] end
+        plan.parts[1] = now
+        if #enabled >= 2 then
+            for i, k in ipairs(enabled) do
+                if k == now then plan.rotateTo = enabled[i % #enabled + 1] end
+            end
+        end
+    end
+    return plan
+end
+
+-- Places where Node Scanner takes a break (nil = fine)
+-- Each place can be allowed in the settings ("Also scan in ...")
+function ns.PausedWhere()
+    local db = ns.db
+    local inInstance, kind = IsInInstance()
+    if inInstance then
+        if kind == "party" and not db.scanDungeon then return "dungeon" end
+        if kind == "raid" and not db.scanRaid then return "raid" end
+        if kind == "pvp" and not db.scanBattleground then return "battleground" end
+        if kind == "arena" and not db.scanArena then return "arena" end
+        if kind ~= "party" and kind ~= "raid" and kind ~= "pvp" and kind ~= "arena"
+            and not db.scanDungeon then return "instance" end
+    end
+    if IsIndoors() and not db.scanIndoors then return "indoors" end
+    if db.pauseResting and IsResting() then return "rested area" end
+end
+
 local function CanScan()
     if job then return false, "already scanning" end
+    local where = ns.PausedWhere()
+    if where then return false, "paused (" .. where .. ")" end
+    if ns.hoverNode then return false, "you are hovering a node in the window" end
     local unfocused, why = GameUnfocused()
     if unfocused then return false, why end
     if not mm:IsVisible() then return false, "minimap hidden" end
@@ -490,7 +634,9 @@ local function CanScan()
         return false, "in combat"
     end
     if IsMouselooking() then return false, "camera is being turned with the mouse" end
-    if mm:IsMouseOver() then return false, "cursor is on the minimap (hovering records nodes directly)" end
+    if ns.db.pauseAtMinimap and (mm:IsMouseOver() or ns.MouseNearMinimap()) then
+        return false, "mouse is at the minimap (hovering records nodes directly)"
+    end
     -- Don't move the minimap under the cursor while you are about to click something
     if GameTooltip:IsShown() and GameTooltip:GetOwner() == UIParent and GameTooltip:GetAlpha() > 0 then
         return false, "mouse is over something in the world"
@@ -499,7 +645,7 @@ local function CanScan()
         local _, px, py = ns.GetPlayerYards()
         if px then
             for _, n in ipairs(ns.nodes) do
-                if (n.x - px) ^ 2 + (n.y - py) ^ 2 <= ns.db.pauseYards ^ 2 then
+                if not ns.IsCreatureKind(n.kind) and (n.x - px) ^ 2 + (n.y - py) ^ 2 <= ns.db.pauseYards ^ 2 then
                     return false, "close to a node (paused so you can click it)"
                 end
             end
@@ -524,6 +670,14 @@ end
 --      node, then find its edges left/right/down/up. The centre is halfway between them.
 -- Every probe is one minimap placement; the coroutine below asks for them one at a time.
 
+-- A minimap dot name that is a mob/NPC (not a quest line, not you or your group)
+function ns.IsCreatureName(name)
+    if name:find("^%-") or name:find("%d+/%d+") then return false end     -- "- 1/8 Prowler slain"
+    if name == UnitName("player") then return false end
+    if UnitInParty and (UnitInParty(name) or UnitInRaid(name)) then return false end
+    return true
+end
+
 -- Names we failed to locate are skipped for a while (e.g. odd objects in cities)
 local givenUp = {}
 function ns.GiveUp(name) givenUp[name] = GetTime() + 120 end
@@ -531,7 +685,7 @@ function ns.IsGivenUp(name) return givenUp[name] and givenUp[name] > GetTime() e
 
 -- Only look for a kind of node if it is shown in the window AND its tracking is on
 function ns.WantKind(kind)
-    if not ns.db[ns.KIND_KEY[kind] or "showHerb"] then return false end
+    if not ns.ShowKind(kind) then return false end
     local t = ns.GatherTracking and ns.GatherTracking()
     if t and t.known[kind] and not t.active[kind] then return false end
     return true
@@ -559,6 +713,8 @@ local function DoScan()
     local t0 = debugprofilestop()
 
     local probes, anyName = 0, false
+    local plan = ns.ScanPlan()
+    local timedOutParts = 0
     local stats = { confirmed = 0, removed = 0, refined = 0, added = 0, swept = 0 }
     local missed = {}                                      -- known nodes that read MISS
     local hitNow = {}                                      -- known nodes that read HIT
@@ -578,13 +734,25 @@ local function DoScan()
     end
 
     local co = coroutine.create(function()
-        local function Probe(dx, dy)
+        local partOver, partDeadline = false, 0
+        local function Probe(dx, dy, noBudget)
+            if not noBudget then
+                if partOver then return {} end
+                if debugprofilestop() > partDeadline then partOver = true; return {} end
+            end
             probes = probes + 1
             if probes > MAX_PROBES then error("probe limit", 0) end
-            if debugprofilestop() - t0 > ns.db.maxScanTime * 1000 then error("time limit", 0) end
             local names = coroutine.yield({ dx, dy, scale = S })
             if #names > 0 then anyName = true end
             return names
+        end
+        -- Switch tracking, then give the minimap a moment to show the new dots
+        local function SwitchAndWait(kind)
+            if not kind then return end
+            ns.SwitchTracking(kind)
+            stats.switches = (stats.switches or 0) + 1
+            local untilT = GetTime() + 0.4
+            while GetTime() < untilT do Probe(half * 3, 0, true) end   -- minimap parked away
         end
         local function Has(names, name)
             for _, n in ipairs(names) do if n == name then return true end end
@@ -634,59 +802,97 @@ local function DoScan()
             return px + ux / half * radius, py - uy / half * radius
         end
 
-        -- 1. Known nodes
-        for _, node in ipairs(ns.nodes) do
-            local ux, uy = Offset(node)
-            if ux and ux * ux + uy * uy <= (half * 0.95) ^ 2 then
-                if Hit(ux, uy, node.name) then
-                    node.seen = GetTime()
-                    hitNow[node] = true
-                    stats.confirmed = stats.confirmed + 1
-                else
-                    missed[#missed + 1] = node
-                end
-            end
-        end
+        -- Find Treasure stacks with the other tracking: just keep it on
+        if plan.treasureOn then SwitchAndWait("treasure") end
 
-        -- 2. Rough nodes: measure their exact centre
-        for _, node in ipairs(ns.nodes) do
-            if ns.db.exact and node.approx and hitNow[node] then
-                node.x, node.y = CentreWorld(node.x, node.y, node.name)
-                node.approx = nil
-                stats.refined = stats.refined + 1
+        for partIndex, kind in ipairs(plan.parts) do
+            partOver = false
+            partDeadline = debugprofilestop() + ns.db.maxScanTime * 1000
+            local t = ns.GatherTracking()
+            if kind and kind ~= "treasure" and not t.active[kind] then SwitchAndWait(kind) end
+            -- kinds visible in this part
+            local partKinds = {}
+            if kind then partKinds[kind] = true end
+            if ns.GatherTracking().active.treasure or not ns.GatherTracking().known.treasure then
+                partKinds.treasure = ns.db.trackTreasure
             end
-        end
+            local function Wanted(k)
+                return k and partKinds[k] and ns.ShowKind(k)
+            end
 
-        -- 3. Sweep for new nodes, continuing where the last scan stopped
-        local grid = ns.sweepGrid
-        for _ = 1, #grid do
-            local g = grid[ns.sweepIndex]
-            ns.sweepIndex = ns.sweepIndex % #grid + 1
-            stats.swept = stats.swept + 1
-            local names = Probe(g[1], g[2])
-            for _, name in ipairs(names) do
-                local kind = ns.Classify(name)
-                if kind and ns.WantKind(kind) then
-                    -- already known nearby?
-                    local known = false
-                    for _, node in ipairs(ns.nodes) do
-                        if node.name == name then
-                            local ux, uy = Offset(node)
-                            local claim = ns.db.mergeYards / radius * half      -- yards -> minimap units
-                            if ux and (ux - g[1]) ^ 2 + (uy - g[2]) ^ 2 <= claim * claim then known = true; break end
-                        end
-                    end
-                    if not known then
-                        local wx, wy = ToWorld(g[1], g[2])
-                        if wx then
-                            ns.nodes[#ns.nodes + 1] = { name = name, kind = kind, x = wx, y = wy,
-                                                        seen = GetTime(), approx = true }
-                            stats.added = stats.added + 1
-                        end
+            -- 1. Known nodes of the kinds visible now (the others are kept as they are)
+            for _, node in ipairs(ns.nodes) do
+                if partOver then break end
+                local ux, uy = Offset(node)
+                if ux and Wanted(node.kind) and not ns.IsCreatureKind(node.kind)
+                    and ux * ux + uy * uy <= (half * 0.95) ^ 2 then
+                    if Hit(ux, uy, node.name) then
+                        node.seen = GetTime()
+                        hitNow[node] = true
+                        stats.confirmed = stats.confirmed + 1
+                    elseif not partOver then
+                        missed[#missed + 1] = node
                     end
                 end
             end
+
+            -- 2. Rough nodes: measure their exact centre
+            for _, node in ipairs(ns.nodes) do
+                if partOver then break end
+                if ns.db.exact and node.approx and hitNow[node] and Wanted(node.kind) then
+                    node.x, node.y = CentreWorld(node.x, node.y, node.name)
+                    node.approx = nil
+                    stats.refined = stats.refined + 1
+                end
+            end
+
+            -- 3. Sweep for new nodes, continuing where the last scan of this kind stopped
+            local grid = ns.sweepGrid
+            ns.sweepIdx = ns.sweepIdx or {}
+            local key = kind or "any"
+            for _ = 1, #grid do
+                if partOver then break end
+                local idx = ns.sweepIdx[key] or 1
+                local g = grid[idx]
+                local names = Probe(g[1], g[2])
+                if partOver then break end
+                ns.sweepIdx[key] = idx % #grid + 1
+                stats.swept = stats.swept + 1
+                for _, name in ipairs(names) do
+                    local k = ns.Classify(name)
+                    if not k and ns.IsCreatureKind(kind) and ns.IsCreatureName(name) then k = kind end
+                    if Wanted(k) then
+                        local known = false
+                        for _, node in ipairs(ns.nodes) do
+                            if node.name == name then
+                                local ux, uy = Offset(node)
+                                local claim = ns.db.mergeYards / radius * half      -- yards -> minimap units
+                                if ux and (ux - g[1]) ^ 2 + (uy - g[2]) ^ 2 <= claim * claim then
+                                    known = true
+                                    if ns.IsCreatureKind(node.kind) then          -- mobs move: follow them
+                                        local wx, wy = ToWorld(g[1], g[2])
+                                        if wx then node.x, node.y = wx, wy end
+                                        node.seen = GetTime()
+                                    end
+                                    break
+                                end
+                            end
+                        end
+                        if not known then
+                            local wx, wy = ToWorld(g[1], g[2])
+                            if wx then
+                                ns.nodes[#ns.nodes + 1] = { name = name, kind = k, x = wx, y = wy,
+                                                            seen = GetTime(), approx = true }
+                                stats.added = stats.added + 1
+                            end
+                        end
+                    end
+                end
+            end
+            if partOver then timedOutParts = timedOutParts + 1 end
         end
+        -- One type per scan: switch to the next ticked type for the next scan
+        if plan.rotateTo then SwitchAndWait(plan.rotateTo) end
     end)
 
     local timedOut = false
@@ -714,6 +920,7 @@ local function DoScan()
         end
         ns.stats.done = ns.stats.done + 1
         ns.lastScanDone = GetTime()
+        if timedOutParts > 0 then timedOut = true end
 
         -- Remove nodes that read MISS - unless the whole scan read nothing at all
         -- (then it probably couldn't see, e.g. right as you tabbed out)
@@ -729,6 +936,14 @@ local function DoScan()
                 if gone[ns.nodes[i]] then table.remove(ns.nodes, i); stats.removed = stats.removed + 1 end
             end
         end
+        -- Mobs/NPCs that haven't been seen for a while are dropped
+        for i = #ns.nodes, 1, -1 do
+            local n = ns.nodes[i]
+            if ns.IsCreatureKind(n.kind) and GetTime() - (n.seen or 0) > ns.db.creatureExpire then
+                table.remove(ns.nodes, i)
+            end
+        end
+
         -- Without "remember", forget nodes that are off the minimap
         if not ns.db.remember then
             local _, px, py = ns.GetPlayerYards()
@@ -785,7 +1000,7 @@ hoverFrame:SetScript("OnUpdate", function(_, elapsed)
     hoverSince = hoverSince + elapsed
     if hoverSince < 0.2 or job or not ns.db then return end
     hoverSince = 0
-    if not mm:IsVisible() or not mm:IsMouseOver() then return end
+    if not mm:IsVisible() or not mm:IsMouseOver() or ns.PausedWhere() then return end
     ns.SafeCall(function()
         local names = ReadNames()
         if #names == 0 then return end
@@ -848,7 +1063,7 @@ events:SetScript("OnEvent", function(_, event, _, _, spellID)
         local best, bestD
         for i, n in ipairs(ns.nodes) do
             local d = (n.x - px) ^ 2 + (n.y - py) ^ 2
-            if d < ns.db.mergeYards ^ 2 and (not bestD or d < bestD) then best, bestD = i, d end
+            if not ns.IsCreatureKind(n.kind) and d < ns.db.mergeYards ^ 2 and (not bestD or d < bestD) then best, bestD = i, d end
         end
         if best then
             ns.Log("INFO", "Gathered %s - removed from the list", ns.nodes[best].name)

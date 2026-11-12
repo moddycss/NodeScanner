@@ -8,7 +8,9 @@ local widgets = {}
 ----------------------------------------------------------------------
 -- Small widget helpers (built by hand so they don't depend on templates)
 ----------------------------------------------------------------------
-local function Check(parent, label, key, x, y, onChange)
+-- available (optional): function returning false (+ reason) when the option can't be used;
+-- the check box is then greyed out and shows the reason as a tooltip
+local function Check(parent, label, key, x, y, onChange, available)
     local cb = CreateFrame("CheckButton", nil, parent)
     cb:SetSize(24, 24)
     cb:SetPoint("TOPLEFT", x, y)
@@ -23,7 +25,29 @@ local function Check(parent, label, key, x, y, onChange)
         ns.db[key] = self:GetChecked() and true or false
         if onChange then onChange() end
     end)
-    cb.Load = function(self) self:SetChecked(ns.db[key]) end
+    cb.Load = function(self)
+        self:SetChecked(ns.db[key])
+        if available then
+            local ok, why = available()
+            self.why = (not ok) and why or nil
+            if ok then
+                self:Enable()
+                fs:SetTextColor(1, 1, 1)
+            else
+                self:Disable()
+                fs:SetTextColor(0.45, 0.45, 0.45)
+            end
+        end
+    end
+    cb:SetMotionScriptsWhileDisabled(true)
+    cb:SetScript("OnEnter", function(self)
+        if self.why then
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:AddLine(self.why, 1, 0.3, 0.3)
+            GameTooltip:Show()
+        end
+    end)
+    cb:SetScript("OnLeave", function() GameTooltip:Hide() end)
     widgets[#widgets + 1] = cb
     return cb
 end
@@ -31,7 +55,7 @@ end
 local function Slider(parent, label, key, minV, maxV, stepV, format, x, y, onChange)
     local s = CreateFrame("Slider", nil, parent, "BackdropTemplate")
     s:SetOrientation("HORIZONTAL")
-    s:SetSize(190, 17)
+    s:SetSize(240, 17)
     s:SetPoint("TOPLEFT", x, y)
     s:EnableMouse(true)
     s:SetBackdrop({
@@ -76,7 +100,7 @@ end
 local function Note(parent, text, x, y)
     local fs = parent:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     fs:SetPoint("TOPLEFT", x, y)
-    fs:SetWidth(190)
+    fs:SetWidth(280)
     fs:SetJustifyH("LEFT")
     fs:SetText(text)
 end
@@ -90,7 +114,7 @@ local function sec(v) return string.format("%d s", v) end
 ----------------------------------------------------------------------
 local function BuildPanel()
     panel = CreateFrame("Frame", "NodeScannerOptionsFrame", UIParent, "BackdropTemplate")
-    panel:SetSize(470, 660)
+    panel:SetSize(910, 730)
     panel:SetPoint("CENTER")
     panel:SetFrameStrata("DIALOG")
     panel:SetBackdrop({
@@ -133,9 +157,14 @@ local function BuildPanel()
     Check(panel, "Hide quest areas while scanning", "hideQuestAreas", L, -350)
     Check(panel, "Warn when Find Minerals/Herbs is off", "trackingWarning", L, -376)
     Check(panel, "Measure exact positions (slower)", "exact", L, -402)
+    Check(panel, "Stand-in map while scanning", "underlay", L, -428)
+    Check(panel, "\"Scanning for nodes\" label", "scanLabel", L, -454)
+    Check(panel, "Stand-in map uses minimap terrain", "minimapTerrain", L, -480)
+    Check(panel, "Stand-in map border", "underlayBorder", L, -506)
+    Check(panel, "Mute the tracking switch sound", "muteSwap", L, -532)
 
     -- Right column: sliders
-    local R = 250
+    local R = 340
     Header(panel, "Appearance", R, -50)
     Slider(panel, "Rows", "rows", 1, 10, 1, int, R, -88, ns.ApplyWindowSettings)
     Slider(panel, "Background opacity", "bgAlpha", 0, 1, 0.05, pct, R, -128, ns.ApplyWindowSettings)
@@ -145,13 +174,61 @@ local function BuildPanel()
     Check(panel, "Scan automatically", "autoScan", R - 4, -224)
     Check(panel, "Also scan in combat", "scanInCombat", R - 4, -248)
     Slider(panel, "Scan every", "interval", 3, 60, 1, sec, R, -290, ns.RestartTicker)
-    Slider(panel, "Search step (px, bigger = faster)", "hitPx", 3, 15, 1, int, R, -330)
-    Slider(panel, "Cluster radius", "cluster", 10, 80, 5, int, R, -370)
-    Slider(panel, "Frames per point", "dwell", 1, 5, 1, int, R, -410)
-    Slider(panel, "Opacity while scanning", "scanAlpha", 0, 1, 0.05, pct, R, -450)
-    Slider(panel, "Pause scanning near a node (yd)", "pauseYards", 0, 30, 1, int, R, -490)
-    Slider(panel, "Same node within (yd)", "mergeYards", 5, 60, 5, int, R, -570)
-    Slider(panel, "Max scan time", "maxScanTime", 1, 5, 0.5, function(v) return string.format("%.1f s", v) end, R, -530)
+    Slider(panel, "Frames per point", "dwell", 1, 5, 1, int, R, -330)
+    Slider(panel, "Opacity while scanning", "scanAlpha", 0, 1, 0.05, pct, R, -370)
+    Slider(panel, "Pause scanning near a node (yd)", "pauseYards", 0, 30, 1, int, R, -410)
+    Slider(panel, "Max scan time", "maxScanTime", 1, 5, 0.5, function(v) return string.format("%.1f s", v) end, R, -450)
+    Slider(panel, "Same node within (yd)", "mergeYards", 5, 60, 5, int, R, -490)
+
+    -- Where to scan / when to pause
+    Header(panel, "Also scan in", R, -526)
+    Check(panel, "Dungeons", "scanDungeon", R - 4, -544)
+    Check(panel, "Raids", "scanRaid", R + 126, -544)
+    Check(panel, "Battlegrounds", "scanBattleground", R - 4, -568)
+    Check(panel, "Arenas", "scanArena", R + 126, -568)
+    Check(panel, "Indoors (caves, buildings)", "scanIndoors", R - 4, -592)
+    Header(panel, "Pause", R, -626)
+    Check(panel, "Mouse at minimap", "pauseAtMinimap", R - 4, -644)
+    Check(panel, "Rested areas", "pauseResting", R + 126, -644)
+
+    -- Third column: tracking table. One line per tracking type:
+    --   [x] Type (Track)      [x] (Scan together)
+    -- Types your character doesn't have are greyed out.
+    local X1, X2 = 620, 790
+    Header(panel, "Tracking", X1, -50)
+    local h1 = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    h1:SetPoint("TOPLEFT", X1, -70); h1:SetText("Track")
+    local h2 = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    h2:SetPoint("TOPLEFT", X2 - 10, -70); h2:SetText("Scan together")
+    for i, tr in ipairs(ns.TRACKERS) do
+        local y = -86 - (i - 1) * 24
+        local function Available()
+            local t = ns.GatherTracking()
+            if t.known[tr.kind] then return true end
+            return false, "Your character doesn't have " .. tr.names[1] .. "."
+        end
+        Check(panel, tr.label, "track" .. tr.key, X1, y, nil, Available)
+        if tr.stacks then
+            local fs = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+            fs:SetPoint("TOPLEFT", X2, y - 6)
+            fs:SetText("always (stacks)")
+        else
+            Check(panel, "", "together" .. tr.key, X2 + 20, y, nil, Available)
+        end
+    end
+    local noteY = -86 - #ns.TRACKERS * 24 - 8
+    for _, text in ipairs({
+        "Each tick under Scan together adds about one 'Max scan time' to every scan (tracking is switched between the parts).",
+        "With only one tick (or none), each scan covers one type and switches to the next ticked Track type for the next scan.",
+        "Treasure: Find Treasure stacks with the other tracking, so chests are in every scan at no extra time.",
+        "Mobs/NPCs: one line per name in the window, pointing at the nearest, with the count in brackets.",
+    }) do
+        local fs = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        fs:SetPoint("TOPLEFT", X1 + 4, noteY)
+        fs:SetWidth(270); fs:SetJustifyH("LEFT")
+        fs:SetText(text)
+        noteY = noteY - math.max(fs:GetStringHeight(), 22) - 6
+    end
 
     -- Buttons
     local reset = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")

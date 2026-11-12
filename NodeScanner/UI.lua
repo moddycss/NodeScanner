@@ -41,8 +41,77 @@ local function UpdateWarning()
     end
 end
 
+local titleText, lastTitle
+
+local KIND_TEXT = { ore = "Mining node", herb = "Herb", treasure = "Treasure" }
+local DIRS = { "north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west" }
+
+-- Blue dot drawn ON TOP of the real minimap at the hovered node's position
+local marker
+local function UpdateMarker()
+    local node = ns.hoverNode
+    if not node or not ns.db then marker:Hide(); return end
+    local _, px, py = ns.GetPlayerYards()
+    if not px or not Minimap:IsVisible() then marker:Hide(); return end
+    local mmS, uiS = Minimap:GetEffectiveScale(), UIParent:GetEffectiveScale()
+    local cx, cy = Minimap:GetCenter()
+    if not cx then marker:Hide(); return end
+    local half = Minimap:GetWidth() / 2
+    local radius = C_Minimap.GetViewRadius and C_Minimap.GetViewRadius() or 233
+    local ux, uy = (node.x - px) / radius * half, (py - node.y) / radius * half
+    local d = math.sqrt(ux * ux + uy * uy)
+    local edge = half - 6
+    if d > edge then ux, uy = ux / d * edge, uy / d * edge end   -- off the map: sit on the edge
+    marker:ClearAllPoints()
+    marker:SetPoint("CENTER", UIParent, "BOTTOMLEFT", (cx + ux) * mmS / uiS, (cy + uy) * mmS / uiS)
+    marker:Show()
+end
+
+local function BuildMarker()
+    marker = CreateFrame("Frame", nil, UIParent)
+    marker:SetSize(12, 12)
+    marker:SetFrameStrata("HIGH")
+    local t = marker:CreateTexture(nil, "OVERLAY")
+    t:SetAllPoints()
+    t:SetTexture("Interface\\AddOns\\NodeScanner\\Media\\NodeDot")
+    t:SetVertexColor(0.25, 0.6, 1)                       -- blue
+    marker:Hide()
+    marker:SetScript("OnUpdate", function() ns.SafeCall(UpdateMarker) end)
+end
+
+local function ShowNodeTooltip(owner, e)
+    if not e or e.unknown or not e.node then return end
+    local n = e.node
+    ns.hoverNode = n
+    if not marker then BuildMarker() end
+    UpdateMarker()
+    GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+    local r, g, b = ns.NodeColor(n.name)
+    GameTooltip:AddLine(n.name, r or 1, g or 0.82, b or 0)
+    local kind = KIND_TEXT[n.kind]
+    if ns.IsCreatureKind(n.kind) then
+        kind = ns.TRACKER[n.kind].label .. string.format(" - %d with this name nearby, showing the nearest", e.count or 1)
+    end
+    local item = ns.NodeItem and ns.NodeItem(n.name)
+    local itemName = item and C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(item)
+    if kind then
+        GameTooltip:AddLine(kind .. (itemName and (" - gives " .. itemName) or ""), 1, 1, 1)
+    end
+    -- compass direction from you to the node
+    local angle = math.deg(math.atan2(e.east, e.north)) % 360
+    local dir = DIRS[math.floor((angle + 22.5) / 45) % 8 + 1]
+    GameTooltip:AddLine(string.format("%s%d yd %s", e.approx and "~" or "", e.dist, dir), 0.9, 0.9, 0.9)
+    GameTooltip:AddLine(e.approx and "Rough position (within ~25 yd)" or "Exact position", 0.6, 0.6, 0.6)
+    local ago = GetTime() - (n.seen or GetTime())
+    GameTooltip:AddLine(ago < 2 and "Confirmed just now" or string.format("Last confirmed %d s ago", ago), 0.6, 0.6, 0.6)
+    GameTooltip:Show()
+end
+
 local function Refresh()
     local db = ns.db
+    local where = ns.PausedWhere and ns.PausedWhere()
+    local t = where and ("Gathering Nodes |cff999999- paused (" .. where .. ")|r") or "Gathering Nodes"
+    if t ~= lastTitle then titleText:SetText(t); lastTitle = t end
     local _, px, py = ns.GetPlayerYards()
 
     local facing = GetPlayerFacing()
@@ -57,16 +126,36 @@ local function Refresh()
     if px then
         local now = GetTime()
         for _, n in ipairs(ns.nodes) do
-            if db[ns.KIND_KEY[n.kind] or "showHerb"] then
+            if ns.ShowKind(n.kind) then
                 local east, north = n.x - px, py - n.y
                 list[#list + 1] = {
-                    name = n.name, east = east, north = north, approx = n.approx,
+                    name = n.name, east = east, north = north, approx = n.approx, node = n,
                     dist = math.sqrt(east * east + north * north),
-                    old = (now - n.seen) > (db.interval * 2 + 0.5),
+                    -- grey when not confirmed for a while (with herb/ore switching each
+                    -- kind is only checked every other scan)
+                    old = (now - n.seen) > (db.interval * 4 + 1),
                 }
             end
         end
         table.sort(list, function(a, b) return a.dist < b.dist end)
+
+        -- Mobs/NPCs: one line per name, pointing at the nearest one, with the count
+        local grouped, firstOf = {}, {}
+        for _, e in ipairs(list) do
+            if ns.IsCreatureKind(e.node.kind) then
+                local f = firstOf[e.name]
+                if f then
+                    f.count = f.count + 1                 -- list is sorted: the first one is nearest
+                else
+                    e.count, e.creature = 1, true
+                    firstOf[e.name] = e
+                    grouped[#grouped + 1] = e
+                end
+            else
+                grouped[#grouped + 1] = e
+            end
+        end
+        list = grouped
     end
     -- Nodes the quick check saw but the scan had no time to locate yet
     -- (minus the ones of that name already shown with a position)
@@ -74,24 +163,27 @@ local function Refresh()
     for _, n in ipairs(list) do shown[n.name] = (shown[n.name] or 0) + 1 end
     for name, c in pairs(ns.unlocated or {}) do
         local kind = ns.Classify(name)
-        if kind and db[ns.KIND_KEY[kind] or "showHerb"] then
+        if kind and ns.ShowKind(kind) then
             for _ = 1, c do list[#list + 1] = { name = name, unknown = true } end
         end
     end
 
     for i = 1, db.rows do
         local row, n = rows[i], list[i]
+        row.entry = n
         if n and n.unknown then
             row.name:SetText(n.name)
             row.name:SetTextColor(1, 0.82, 0)
             row.dist:SetText("?")
             row.arrow:Hide()
         elseif n then
-            row.name:SetText(n.name)
+            row.name:SetText(n.creature and string.format("%s (%d)", n.name, n.count) or n.name)
             row.dist:SetText(string.format(n.approx and "~%d" or "%d", n.dist))
             -- remembered (not currently seen) nodes are grey
-            if n.old then
+            if n.old and not n.creature then
                 row.name:SetTextColor(0.6, 0.6, 0.6)
+            elseif n.creature then
+                row.name:SetTextColor(1, 0.55, 0.45)        -- mobs / NPCs: light red
             else
                 -- colour of the ore/herb rarity (white, green, blue, ...); chests stay gold
                 local r, g, b = ns.NodeColor(n.name)
@@ -135,9 +227,9 @@ local function Build()
         ns.db.pos = { point, relPoint, x, y }
     end)
 
-    local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    title:SetPoint("TOPLEFT", 10, -8)
-    title:SetText("Gathering Nodes")
+    titleText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    titleText:SetPoint("TOPLEFT", 10, -8)
+    titleText:SetText("Gathering Nodes")
 
     for i = 1, MAX_ROWS do
         local row = {}
@@ -153,6 +245,20 @@ local function Build()
         row.arrow:SetTexture("Interface\\Minimap\\MinimapArrow")
         row.arrow:SetSize(20, 20)
         row.arrow:SetPoint("TOPRIGHT", -8, y + 2)
+
+        -- Invisible hover area over the row: tooltip with what the node is
+        row.hover = CreateFrame("Frame", nil, frame)
+        row.hover:SetPoint("TOPLEFT", 6, y + 2)
+        row.hover:SetPoint("TOPRIGHT", -6, y + 2)
+        row.hover:SetHeight(ROW_HEIGHT)
+        row.hover:SetScript("OnEnter", function(self) ShowNodeTooltip(self, row.entry) end)
+        row.hover:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+            ns.hoverNode = nil
+            if marker then marker:Hide() end
+        end)
+        -- let clicks and dragging the window still work through the row
+        if row.hover.SetPropagateMouseClicks then row.hover:SetPropagateMouseClicks(true) end
         rows[i] = row
     end
 
