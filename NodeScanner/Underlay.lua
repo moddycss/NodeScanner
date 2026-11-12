@@ -31,7 +31,10 @@ local function Build()
     arrow:SetSize(28, 28)
     arrow:SetPoint("CENTER")
 
-    label = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    local labelFrame = CreateFrame("Frame", nil, frame)
+    labelFrame:SetAllPoints(frame)
+    frame.labelFrame = labelFrame                            -- kept above the copied ring
+    label = labelFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     label:SetPoint("BOTTOM", frame, "TOP", 0, 4)
     label:SetText("Scanning for nodes")
 end
@@ -353,7 +356,11 @@ local function CloneInto(g, roots)
         g.nt = g.nt + 1
         local c = g.tex[g.nt]
         if not c then c = frame:CreateTexture(); g.tex[g.nt] = c end
-        c:SetParent(Container(g, LevelOf(region)))
+        -- The ring/border goes right above our map and under everything else, so real
+        -- buttons that stay on screen during a scan (like the sun/moon) are never covered.
+        local key = big and ((STRATA[frame:GetFrameStrata()] or 2) * 100000 + frame:GetFrameLevel() + 1)
+            or LevelOf(region)
+        c:SetParent(Container(g, key))
         c:SetDrawLayer(layer or "ARTWORK", sub or 0)
         for i = c:GetNumMaskTextures(), 1, -1 do c:RemoveMaskTexture(c:GetMaskTexture(i)) end
         if atlas then c:SetAtlas(atlas) else c:SetTexture(tex) end
@@ -475,7 +482,8 @@ local function PlaceAtMinimap()
     frame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", l * s, b * s)
     frame:SetSize(w * s, h * s)
     frame:SetFrameStrata(Minimap:GetFrameStrata())
-    frame:SetFrameLevel(math.max(0, Minimap:GetFrameLevel() - 1))
+    frame:SetFrameLevel(math.max(0, Minimap:GetFrameLevel() - 2))
+    frame.labelFrame:SetFrameLevel(frame:GetFrameLevel() + 200)
     return true
 end
 
@@ -537,6 +545,7 @@ function ns.UnderlayTest()
     frame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMLEFT", l * s - 20, b * s)
     frame:SetSize(w * s, h * s)
     frame:SetFrameStrata("HIGH")
+    frame.labelFrame:SetFrameLevel(frame:GetFrameLevel() + 200)
     label:SetText("Stand-in map (test)")
     label:Show()
     ns.SafeCall(Update)
