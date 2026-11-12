@@ -292,15 +292,32 @@ ev:SetScript("OnEvent", function() currentMap = nil end)
 local groups = { kids = { tex = {}, fs = {}, masks = {}, frames = {} },
                  over = { tex = {}, fs = {}, masks = {}, frames = {} } }
 
-local function Container(g, levelOffset)
-    levelOffset = math.max(0, math.min(levelOffset, 40))
-    local c = g.frames[levelOffset]
+-- Stacking order of the copies: the real pieces sit in different frames, strata and levels
+-- (the sun/moon and tracking button are above the minimap's ring). Every (strata, level)
+-- seen gets its own container, in the same order, so the copies stack the same way.
+local STRATA = { BACKGROUND = 1, LOW = 2, MEDIUM = 3, HIGH = 4, DIALOG = 5,
+                 FULLSCREEN = 6, FULLSCREEN_DIALOG = 7, TOOLTIP = 8 }
+local keysSeen, keyRank, keysChanged = {}, {}, false
+local function AddKey(key)
+    if keysSeen[key] then return end
+    keysSeen[key] = true
+    keysChanged = true
+    local list = {}
+    for k in pairs(keysSeen) do list[#list + 1] = k end
+    table.sort(list)
+    wipe(keyRank)
+    for i, k in ipairs(list) do keyRank[k] = i end
+end
+
+local function Container(g, key)
+    local rank = math.min(keyRank[key] or 0, 200)
+    local c = g.frames[rank]
     if not c then
         c = CreateFrame("Frame", nil, frame)
         c:SetAllPoints(frame)
-        g.frames[levelOffset] = c
+        g.frames[rank] = c
     end
-    c:SetFrameLevel(frame:GetFrameLevel() + 5 + levelOffset)
+    c:SetFrameLevel(frame:GetFrameLevel() + 5 + rank)
     c:Show()
     return c
 end
@@ -326,7 +343,11 @@ local function CloneInto(g, roots)
     end
     local function LevelOf(region)
         local p = region.GetParent and region:GetParent()
-        return (p and p.GetFrameLevel and p:GetFrameLevel() or baseLevel) - baseLevel
+        local strata = p and p.GetFrameStrata and p:GetFrameStrata() or "LOW"
+        local level = p and p.GetFrameLevel and p:GetFrameLevel() or baseLevel
+        local key = (STRATA[strata] or 2) * 100000 + level
+        AddKey(key)
+        return key
     end
 
     local function CopyTexture(region)
@@ -441,6 +462,14 @@ local function CloneOverlays()
     local list = ns.MinimapOverlays and ns.MinimapOverlays() or {}
     CloneInto(groups.over, list)
 end
+local function CloneAll()
+    for _ = 1, 2 do
+        keysChanged = false
+        ns.SafeCall(CloneKids)
+        ns.SafeCall(CloneOverlays)
+        if not keysChanged then break end      -- new levels found: once more, in the right order
+    end
+end
 local function HideGroup(g)
     for _, c in pairs(g.frames) do c:Hide() end
 end
@@ -501,8 +530,7 @@ function ns.UnderlayShow()
     if not PlaceAtMinimap() then return end
     label:SetShown(ns.db.scanLabel)
     -- copy the minimap's pieces before the scanner hides them
-    ns.SafeCall(CloneKids)
-    ns.SafeCall(CloneOverlays)
+    CloneAll()
     ns.SafeCall(Update)
     frame:Show()
     updater:Show()
@@ -515,8 +543,7 @@ function ns.UnderlayTest()
     local l, b, w, h = Minimap:GetRect()
     if not l then return end
     local s = Minimap:GetEffectiveScale() / UIParent:GetEffectiveScale()
-    ns.SafeCall(CloneKids)
-    ns.SafeCall(CloneOverlays)
+    CloneAll()
     frame:ClearAllPoints()
     frame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMLEFT", l * s - 20, b * s)
     frame:SetSize(w * s, h * s)
