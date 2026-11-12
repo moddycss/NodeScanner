@@ -1,3 +1,4 @@
+-- Node Scanner - created with the help of AI (Claude). MIT licensed.
 -- NodeScanner Debug window: shows the log (errors, warnings, sweep details).
 -- The text can be selected and copied with Ctrl+C.
 

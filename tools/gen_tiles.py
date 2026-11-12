@@ -1,10 +1,12 @@
+# Node Scanner tools - created with the help of AI (Claude). MIT licensed.
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # Usage: python gen_tiles.py <folder with azeroth/azeroth.wdt and kalimdor/kalimdor.wdt> <output MinimapTiles.lua>
 # (export the two WDT files with wow.export from your own WoW Forever client)
 root, out_path = sys.argv[1], sys.argv[2]
 import wdt
-out = ["-- Minimap terrain tiles: FileDataID of the minimap image for each 533.33-yard square.",
+out = ["-- Node Scanner - created with the help of AI (Claude). MIT licensed.",
+       "-- Minimap terrain tiles: FileDataID of the minimap image for each 533.33-yard square.",
        "-- Generated from the continents' WDT files (MAID chunk) of the WoW Forever client.",
        "-- Index = y * 64 + x, same grid as the game's ADT tiles. No images are shipped, only numbers.",
        "local _, ns = ...",

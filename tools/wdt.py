@@ -1,3 +1,4 @@
+# Node Scanner tools - created with the help of AI (Claude). MIT licensed.
 """Minimal reader for WoW WDT files: lists chunks and reads the MAID tile table."""
 import struct, sys
 def chunks(path):

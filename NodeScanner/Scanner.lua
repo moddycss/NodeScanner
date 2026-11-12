@@ -1,3 +1,4 @@
+-- Node Scanner - created with the help of AI (Claude). MIT licensed.
 -- NodeScanner Scanner: finds the yellow dots on the minimap.
 --
 -- Since client build 70862 the minimap only reports the dot under the REAL mouse cursor.
