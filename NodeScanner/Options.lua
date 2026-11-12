@@ -194,6 +194,7 @@ local function BuildPanel()
     Check(panel, "Rested areas", "pauseResting", R + 126, -644)
     Check(panel, "Mouse over interface", "pauseUI", R - 4, -668)
     Check(panel, "Windows open", "pauseWindows", R + 126, -668)
+    Check(panel, "Tooltip shown", "pauseTooltip", R - 4, -692)
 
     -- Third column: tracking table. One line per tracking type:
     --   [x] Type (Track)      [x] (Scan together)

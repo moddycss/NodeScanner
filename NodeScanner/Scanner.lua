@@ -640,6 +640,22 @@ function ns.MouseOverUI()
     return false
 end
 
+-- Is a game tooltip on screen (from anything you hover: units, objects, buttons, items)?
+-- The minimap passing under the cursor would make it disappear.
+local TOOLTIPS = { "GameTooltip", "ShoppingTooltip1", "ShoppingTooltip2", "EmbeddedItemTooltip" }
+function ns.TooltipShown()
+    for _, name in ipairs(TOOLTIPS) do
+        local t = _G[name]
+        local ok, shown = pcall(function()
+            if not (t and t:IsShown() and t:GetAlpha() > 0) then return false end
+            local owner = t:GetOwner()
+            if owner == mm or owner == _G.NodeScannerUnderlay then return false end   -- the minimap's own
+            return true
+        end)
+        if ok and shown then return name end
+    end
+end
+
 -- Is one of the game's windows open (talents, flight map, spellbook, character ...)?
 local EXTRA_WINDOWS = { "TaxiFrame", "FlightMapFrame", "WorldMapFrame", "MerchantFrame",
                         "GossipFrame", "QuestFrame", "MailFrame", "AuctionHouseFrame",
@@ -688,9 +704,10 @@ local function CanScan()
     if ns.db.pauseUI then
         local over, what = ns.MouseOverUI()
         if over then return false, "mouse is over the interface (" .. tostring(what) .. ")" end
-        if GameTooltip:IsShown() and GameTooltip:GetAlpha() > 0 then
-            return false, "a tooltip is shown"
-        end
+    end
+    if ns.db.pauseTooltip then
+        local tip = ns.TooltipShown()
+        if tip then return false, "a tooltip is shown (" .. tip .. ")" end
     end
     if ns.db.pauseYards > 0 then
         local _, px, py = ns.GetPlayerYards()

@@ -2,7 +2,7 @@
 -- The actual minimap scanning lives in Scanner.lua.
 
 local ADDON_NAME, ns = ...
-ns.VERSION = "1.2.2.0"   -- WoWpatch.Release.Major.Minor
+ns.VERSION = "1.2.2.1"   -- WoWpatch.Release.Major.Minor
 
 ns.defaults = {
     shown         = true,   -- main window visible
@@ -22,7 +22,8 @@ ns.defaults = {
     scanIndoors   = false,
     pauseAtMinimap = true,  -- pause while the mouse is at the minimap
     pauseResting  = false,  -- pause in rested areas (inns, cities)
-    pauseUI       = true,   -- pause while the mouse is over the interface / a tooltip is shown
+    pauseUI       = true,   -- pause while the mouse is over the interface
+    pauseTooltip  = true,   -- pause while a game tooltip is shown
     pauseWindows  = true,   -- pause while a game window is open (talents, flight map ...)
     hideQuestAreas = true,  -- turn quest areas off during a scan (they ignore opacity)
     alwaysLocate  = false,  -- run the grid even when the quick check found nothing (debug)
