@@ -6,6 +6,8 @@ A World of Warcraft: Forever addon that shows the gathering nodes on your minima
 (ore, herbs, treasure chests) in a small window, with a rough distance and an arrow
 pointing towards each one.
 
+*Created with the help of AI (Claude).*
+
 ```
 Gathering Nodes
 Copper Vein     ~58  ↗
