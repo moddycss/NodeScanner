@@ -9,6 +9,7 @@ local _, ns = ...
 local frame, mask, arrow, label, bg
 local tiles, dots = {}, {}
 local currentMap
+local replacing = false            -- "Always use the stand-in map" is active
 local updater = CreateFrame("Frame")
 updater:Hide()
 
@@ -201,10 +202,12 @@ local function Update()
             end
             d:ClearAllPoints()
             d:SetPoint("CENTER", frame, "CENTER", ex, ny)
+            d.ex, d.ny, d.node = ex, ny, node
             d:Show()
         end
     end
     for i = n + 1, #dots do dots[i]:Hide() end
+    frame.dotCount = n
 
     local facing = GetPlayerFacing()
     if facing and not ns.IsSecret(facing) then
@@ -215,7 +218,64 @@ local function Update()
     end
 end
 
-updater:SetScript("OnUpdate", function() ns.SafeCall(Update) end)
+----------------------------------------------------------------------
+-- Tooltips for our dots, like the minimap's own: when the real minimap is hidden for good,
+-- its dots can't be seen, and our (rough) dot may not sit exactly on the real one.
+-- The real minimap's tooltip wins whenever it has something to say.
+----------------------------------------------------------------------
+local ownTip = false
+local anchorType = "ANCHOR_LEFT"          -- learned from the minimap's own tooltip
+local HOVER = 7                            -- UI units around a dot
+
+local function HideOwnTip()
+    if ownTip and GameTooltip:GetOwner() == frame then GameTooltip:Hide() end
+    ownTip = false
+end
+
+local function UpdateTooltip()
+    if not (replacing and frame:IsShown()) or (ns.IsScanning and ns.IsScanning()) then
+        HideOwnTip(); return
+    end
+    -- the minimap's own tooltip: let it be, and learn where it puts itself
+    if GameTooltip:IsShown() and GameTooltip:GetOwner() == Minimap then
+        local a = GameTooltip.GetAnchorType and GameTooltip:GetAnchorType()
+        if a and a ~= "ANCHOR_NONE" then anchorType = a end
+        ownTip = false
+        return
+    end
+    if not frame:IsMouseOver() then HideOwnTip(); return end
+    local real = C_TooltipInfo.GetMinimapMouseover()
+    if real and not ns.IsSecret(real) and real.lines and #real.lines > 0 then
+        HideOwnTip()                         -- the game shows its own tooltip now
+        return
+    end
+    local cx, cy = GetCursorPosition()
+    local s = frame:GetEffectiveScale()
+    local fx, fy = frame:GetCenter()
+    cx, cy = cx / s - fx, cy / s - fy
+    local names, seenName = {}, {}
+    for i = 1, frame.dotCount or 0 do
+        local d = dots[i]
+        if (d.ex - cx) ^ 2 + (d.ny - cy) ^ 2 <= HOVER * HOVER and d.node then
+            local name = d.node.name
+            if not seenName[name] then seenName[name] = true; names[#names + 1] = name end
+        end
+    end
+    if #names == 0 then HideOwnTip(); return end
+    local text = table.concat(names, "\n")
+    -- owned by our map (same place and size as the minimap): the minimap would hide a
+    -- tooltip it owns when it has nothing under the mouse itself
+    if ownTip == text and GameTooltip:IsShown() and GameTooltip:GetOwner() == frame then return end
+    GameTooltip:SetOwner(frame, anchorType)
+    GameTooltip:SetText(text, 1, 1, 1)
+    GameTooltip:Show()
+    ownTip = text
+end
+
+updater:SetScript("OnUpdate", function()
+    ns.SafeCall(Update)
+    ns.SafeCall(UpdateTooltip)
+end)
 
 -- A newly explored area changes the overlays: rebuild next time
 local ev = CreateFrame("Frame")
@@ -391,8 +451,6 @@ end
 -- buttons still work - you just see our copies). Only where we have minimap terrain
 -- (Eastern Kingdoms and Kalimdor, outdoors); everywhere else the real minimap is shown.
 ----------------------------------------------------------------------
-local replacing = false
-
 local function PlaceAtMinimap()
     local l, b, w, h = Minimap:GetRect()
     if not l then return false end
@@ -409,6 +467,7 @@ local function StopReplacing()
     if not replacing then return end
     if ns.IsScanning and ns.IsScanning() then return end   -- after the scan
     replacing = false
+    HideOwnTip()
     Minimap:SetAlpha(1)
     if frame then frame:Hide() end
     updater:Hide()
