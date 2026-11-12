@@ -2,7 +2,7 @@
 -- The actual minimap scanning lives in Scanner.lua.
 
 local ADDON_NAME, ns = ...
-ns.VERSION = "1.2.0.0"   -- WoWpatch.Release.Major.Minor
+ns.VERSION = "1.3.0.0"   -- WoWpatch.Release.Major.Minor
 
 ns.defaults = {
     shown         = true,   -- main window visible
@@ -22,6 +22,9 @@ ns.defaults = {
     scanIndoors   = false,
     pauseAtMinimap = true,  -- pause while the mouse is at the minimap
     pauseResting  = false,  -- pause in rested areas (inns, cities)
+    pauseUI       = true,   -- pause while the mouse is over the interface
+    pauseTooltip  = true,   -- pause while a game tooltip is shown
+    pauseWindows  = true,   -- pause while a game window is open (talents, flight map ...)
     hideQuestAreas = true,  -- turn quest areas off during a scan (they ignore opacity)
     alwaysLocate  = false,  -- run the grid even when the quick check found nothing (debug)
     scanAlpha     = 0,      -- minimap opacity while scanning (Minimap Alert uses 0)
@@ -43,6 +46,7 @@ ns.defaults = {
     minimapTerrain = true,  -- stand-in map uses the real minimap terrain images
     underlay      = true,
     underlayBorder = true,  -- copy the minimap's border onto the stand-in map   -- show a stand-in map where the minimap is while it scans
+    replaceMinimap = false, -- off: stand-in map only while scanning; on: always our map
     scanLabel     = true,   -- "Scanning for nodes" above the minimap while scanning
     exact         = false,  -- measure exact node positions (slower); off = rough is enough
       -- seconds; a scan never runs longer than this    -- max reads spent looking for one new node before giving up

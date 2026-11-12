@@ -175,6 +175,7 @@ local function MinimapOverlays()
     overlayCache, overlayCacheTime = list, GetTime()
     return list
 end
+ns.MinimapOverlays = MinimapOverlays
 
 local function Prepare(alpha)
     if saved then return end
@@ -332,6 +333,7 @@ runner:SetScript("OnUpdate", function()
         or (InCombatLockdown() and not ns.db.scanInCombat) and "combat"
         or IsMouselooking() and "camera turned with the mouse"
         or (IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton")) and "mouse button pressed"
+        or (ns.db.pauseWindows and ns.WindowOpen()) and "a window opened"
     if why then return Stop(false, "aborted (" .. why .. ")") end
     local ok, err = pcall(function()
         j.frames = j.frames + 1
@@ -622,6 +624,60 @@ function ns.PausedWhere()
     if db.pauseResting and IsResting() then return "rested area" end
 end
 
+-- Is the mouse over a piece of the interface (a button, a window, a tooltip...)?
+-- Moving the minimap under the cursor would take the mouse away from it, so its
+-- tooltip would vanish ("OnLeave") - wait until you are back over the world.
+function ns.MouseOverUI()
+    local foci
+    if GetMouseFoci then foci = GetMouseFoci()
+    elseif GetMouseFocus then foci = { GetMouseFocus() } end
+    for _, f in ipairs(foci or {}) do
+        if f and f ~= WorldFrame and f ~= mm then
+            local name = f.GetDebugName and f:GetDebugName() or (f.GetName and f:GetName()) or "?"
+            return true, name
+        end
+    end
+    return false
+end
+
+-- Is a game tooltip on screen (from anything you hover: units, objects, buttons, items)?
+-- The minimap passing under the cursor would make it disappear.
+local TOOLTIPS = { "GameTooltip", "ShoppingTooltip1", "ShoppingTooltip2", "EmbeddedItemTooltip" }
+function ns.TooltipShown()
+    for _, name in ipairs(TOOLTIPS) do
+        local t = _G[name]
+        local ok, shown = pcall(function()
+            if not (t and t:IsShown() and t:GetAlpha() > 0) then return false end
+            local owner = t:GetOwner()
+            if owner == mm or owner == _G.NodeScannerUnderlay then return false end   -- the minimap's own
+            return true
+        end)
+        if ok and shown then return name end
+    end
+end
+
+-- Is one of the game's windows open (talents, flight map, spellbook, character ...)?
+local EXTRA_WINDOWS = { "TaxiFrame", "FlightMapFrame", "WorldMapFrame", "MerchantFrame",
+                        "GossipFrame", "QuestFrame", "MailFrame", "AuctionHouseFrame",
+                        "PlayerTalentFrame", "ClassTalentFrame", "PlayerSpellsFrame",
+                        "SettingsPanel", "GameMenuFrame", "TradeSkillFrame", "ProfessionsFrame" }
+function ns.WindowOpen()
+    local found
+    pcall(function()
+        for _, name in ipairs(EXTRA_WINDOWS) do
+            local f = _G[name]
+            if f and f.IsShown and f:IsShown() then found = name; return end
+        end
+        if type(UIPanelWindows) == "table" then
+            for name in pairs(UIPanelWindows) do
+                local f = _G[name]
+                if f and f.IsShown and f:IsShown() then found = name; return end
+            end
+        end
+    end)
+    return found
+end
+
 local function CanScan()
     if job then return false, "already scanning" end
     local where = ns.PausedWhere()
@@ -640,6 +696,18 @@ local function CanScan()
     -- Don't move the minimap under the cursor while you are about to click something
     if GameTooltip:IsShown() and GameTooltip:GetOwner() == UIParent and GameTooltip:GetAlpha() > 0 then
         return false, "mouse is over something in the world"
+    end
+    if ns.db.pauseWindows then
+        local w = ns.WindowOpen()
+        if w then return false, "a window is open (" .. w .. ")" end
+    end
+    if ns.db.pauseUI then
+        local over, what = ns.MouseOverUI()
+        if over then return false, "mouse is over the interface (" .. tostring(what) .. ")" end
+    end
+    if ns.db.pauseTooltip then
+        local tip = ns.TooltipShown()
+        if tip then return false, "a tooltip is shown (" .. tip .. ")" end
     end
     if ns.db.pauseYards > 0 then
         local _, px, py = ns.GetPlayerYards()
@@ -692,6 +760,54 @@ function ns.WantKind(kind)
 end
 local MAX_PROBES = 400
 local SWEEP_STEP = 18      -- minimap units between sweep points (a dot's hover area is ~25 wide)
+-- One dot can be read from every sweep point within its hover area, so hits up to about
+-- one hover-area width apart can be the same node. Measured in minimap units, because
+-- that is what the hover area is - in yards it depends on the zoom.
+local HOVER_SPAN = 26
+
+-- Add one sweep hit to a rough node: its position becomes the average of all its hits,
+-- which lands close to the real dot.
+local function AddHit(node, wx, wy)
+    if not node.hn then node.hn, node.sx, node.sy = 1, node.x, node.y end
+    node.hn = node.hn + 1
+    node.sx, node.sy = node.sx + wx, node.sy + wy
+    node.x, node.y = node.sx / node.hn, node.sy / node.hn
+end
+
+-- Merge rough nodes of the same name that are closer than one hover area
+-- (several sweep points reading the same dot). Exact nodes use "Same node within".
+local function CollapseDuplicates(radius, half)
+    local span = HOVER_SPAN / half * radius               -- minimap units -> yards
+    local merged = 0
+    local i = 1
+    while i <= #ns.nodes do
+        local a = ns.nodes[i]
+        local j = i + 1
+        while j <= #ns.nodes do
+            local b = ns.nodes[j]
+            local limit = (a.approx or b.approx) and math.max(span, ns.db.mergeYards) or ns.db.mergeYards
+            if a.name == b.name and not ns.IsCreatureKind(a.kind)
+                and (a.x - b.x) ^ 2 + (a.y - b.y) ^ 2 <= limit * limit then
+                if a.approx and not b.approx then
+                    a.x, a.y, a.approx, a.hn, a.sx, a.sy = b.x, b.y, nil, nil, nil, nil
+                elseif a.approx and b.approx then
+                    local an, bn = a.hn or 1, b.hn or 1
+                    a.sx = (a.sx or a.x) + (b.sx or b.x)
+                    a.sy = (a.sy or a.y) + (b.sy or b.y)
+                    a.hn = an + bn
+                    a.x, a.y = a.sx / a.hn, a.sy / a.hn
+                end
+                a.seen = math.max(a.seen or 0, b.seen or 0)
+                table.remove(ns.nodes, j)
+                merged = merged + 1
+            else
+                j = j + 1
+            end
+        end
+        i = i + 1
+    end
+    return merged
+end
 
 -- How a scan works now (everything at normal minimap size, where reads are reliable):
 --   1. Known nodes: one read where each should be. HIT = still there, MISS = gone.
@@ -862,20 +978,28 @@ local function DoScan()
                     local k = ns.Classify(name)
                     if not k and ns.IsCreatureKind(kind) and ns.IsCreatureName(name) then k = kind end
                     if Wanted(k) then
-                        local known = false
+                        -- Same node? Gathering nodes: anything of that name within one
+                        -- hover area of this sweep point. Mobs: "Same node within".
+                        local known, bestD = nil, nil
+                        local claimMob = ns.db.mergeYards / radius * half       -- yards -> minimap units
+                        local claimNode = math.max(HOVER_SPAN, claimMob)
                         for _, node in ipairs(ns.nodes) do
                             if node.name == name then
                                 local ux, uy = Offset(node)
-                                local claim = ns.db.mergeYards / radius * half      -- yards -> minimap units
-                                if ux and (ux - g[1]) ^ 2 + (uy - g[2]) ^ 2 <= claim * claim then
-                                    known = true
-                                    if ns.IsCreatureKind(node.kind) then          -- mobs move: follow them
-                                        local wx, wy = ToWorld(g[1], g[2])
-                                        if wx then node.x, node.y = wx, wy end
-                                        node.seen = GetTime()
-                                    end
-                                    break
+                                local claim = ns.IsCreatureKind(node.kind) and claimMob or claimNode
+                                local d = ux and (ux - g[1]) ^ 2 + (uy - g[2]) ^ 2
+                                if d and d <= claim * claim and (not bestD or d < bestD) then
+                                    known, bestD = node, d
                                 end
+                            end
+                        end
+                        if known then
+                            local wx, wy = ToWorld(g[1], g[2])
+                            if ns.IsCreatureKind(known.kind) then                -- mobs move: follow them
+                                if wx then known.x, known.y = wx, wy end
+                                known.seen = GetTime()
+                            elseif known.approx and wx then
+                                AddHit(known, wx, wy)
                             end
                         end
                         if not known then
@@ -936,6 +1060,7 @@ local function DoScan()
                 if gone[ns.nodes[i]] then table.remove(ns.nodes, i); stats.removed = stats.removed + 1 end
             end
         end
+        stats.merged = CollapseDuplicates(radius, half)
         -- Mobs/NPCs that haven't been seen for a while are dropped
         for i = #ns.nodes, 1, -1 do
             local n = ns.nodes[i]
@@ -957,10 +1082,10 @@ local function DoScan()
         ns.unlocated = nil
         if stats.confirmed + stats.removed + stats.refined + stats.added > 0 then ns.stats.found = ns.stats.found + 1 end
 
-        if verbose or stats.added + stats.removed + stats.refined > 0 then
-            ns.Log("INFO", "Scan: %d reads, %.0f ms%s | %d confirmed, %d gone, %d new (rough), %d measured, swept %d/%d",
+        if verbose or stats.added + stats.removed + stats.refined + (stats.merged or 0) > 0 then
+            ns.Log("INFO", "Scan: %d reads, %.0f ms%s | %d confirmed, %d gone, %d new (rough), %d measured, %d merged, swept %d/%d",
                 probes, debugprofilestop() - t0, timedOut and " (time up)" or "",
-                stats.confirmed, stats.removed, stats.added, stats.refined, stats.swept, #ns.sweepGrid)
+                stats.confirmed, stats.removed, stats.added, stats.refined, stats.merged or 0, stats.swept, #ns.sweepGrid)
             local _, px, py = ns.GetPlayerYards()
             if px and verbose then
                 for _, n in ipairs(ns.nodes) do

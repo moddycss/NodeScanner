@@ -9,6 +9,7 @@ local _, ns = ...
 local frame, mask, arrow, label, bg
 local tiles, dots = {}, {}
 local currentMap
+local replacing = false            -- "Always use the stand-in map" is active
 local updater = CreateFrame("Frame")
 updater:Hide()
 
@@ -30,8 +31,11 @@ local function Build()
     arrow:SetSize(28, 28)
     arrow:SetPoint("CENTER")
 
-    label = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    label:SetPoint("BOTTOM", frame, "TOP", 0, 4)
+    local labelFrame = CreateFrame("Frame", nil, frame)
+    labelFrame:SetAllPoints(frame)
+    frame.labelFrame = labelFrame                            -- kept above the copied ring
+    label = labelFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    label:SetPoint("BOTTOM", frame, "TOP", 0, 16)   -- above the compass marker on the ring
     label:SetText("Scanning for nodes")
 end
 
@@ -201,10 +205,12 @@ local function Update()
             end
             d:ClearAllPoints()
             d:SetPoint("CENTER", frame, "CENTER", ex, ny)
+            d.ex, d.ny, d.node = ex, ny, node
             d:Show()
         end
     end
     for i = n + 1, #dots do dots[i]:Hide() end
+    frame.dotCount = n
 
     local facing = GetPlayerFacing()
     if facing and not ns.IsSecret(facing) then
@@ -215,93 +221,311 @@ local function Update()
     end
 end
 
-updater:SetScript("OnUpdate", function() ns.SafeCall(Update) end)
+----------------------------------------------------------------------
+-- Tooltips for our dots, like the minimap's own: when the real minimap is hidden for good,
+-- its dots can't be seen, and our (rough) dot may not sit exactly on the real one.
+-- The real minimap's tooltip wins whenever it has something to say.
+----------------------------------------------------------------------
+local ownTip = false
+local anchorType = "ANCHOR_LEFT"          -- learned from the minimap's own tooltip
+local HOVER = 7                            -- UI units around a dot
+
+local function HideOwnTip()
+    if ownTip and GameTooltip:GetOwner() == frame then GameTooltip:Hide() end
+    ownTip = false
+end
+
+local function UpdateTooltip()
+    if not (replacing and frame:IsShown()) or (ns.IsScanning and ns.IsScanning()) then
+        HideOwnTip(); return
+    end
+    -- the minimap's own tooltip: let it be, and learn where it puts itself
+    if GameTooltip:IsShown() and GameTooltip:GetOwner() == Minimap then
+        local a = GameTooltip.GetAnchorType and GameTooltip:GetAnchorType()
+        if a and a ~= "ANCHOR_NONE" then anchorType = a end
+        ownTip = false
+        return
+    end
+    if not frame:IsMouseOver() then HideOwnTip(); return end
+    local real = C_TooltipInfo.GetMinimapMouseover()
+    if real and not ns.IsSecret(real) and real.lines and #real.lines > 0 then
+        HideOwnTip()                         -- the game shows its own tooltip now
+        return
+    end
+    local cx, cy = GetCursorPosition()
+    local s = frame:GetEffectiveScale()
+    local fx, fy = frame:GetCenter()
+    cx, cy = cx / s - fx, cy / s - fy
+    local names, seenName = {}, {}
+    for i = 1, frame.dotCount or 0 do
+        local d = dots[i]
+        if (d.ex - cx) ^ 2 + (d.ny - cy) ^ 2 <= HOVER * HOVER and d.node then
+            local name = d.node.name
+            if not seenName[name] then seenName[name] = true; names[#names + 1] = name end
+        end
+    end
+    if #names == 0 then HideOwnTip(); return end
+    local text = table.concat(names, "\n")
+    -- owned by our map (same place and size as the minimap): the minimap would hide a
+    -- tooltip it owns when it has nothing under the mouse itself
+    if ownTip == text and GameTooltip:IsShown() and GameTooltip:GetOwner() == frame then return end
+    GameTooltip:SetOwner(frame, anchorType)
+    GameTooltip:SetText(text, 1, 1, 1)
+    GameTooltip:Show()
+    ownTip = text
+end
+
+updater:SetScript("OnUpdate", function()
+    ns.SafeCall(Update)
+    ns.SafeCall(UpdateTooltip)
+end)
 
 -- A newly explored area changes the overlays: rebuild next time
 local ev = CreateFrame("Frame")
 pcall(ev.RegisterEvent, ev, "MAP_EXPLORATION_UPDATED")     -- may not exist on every client
 ev:SetScript("OnEvent", function() currentMap = nil end)
 
--- Border: copy the real minimap's own border textures (ring, compass marker ...) onto the
--- stand-in map, same texture, size and position. Only large textures are copied (at least
--- 60 % of the minimap's width), so small buttons and icons are left out.
-local border, borderTex = nil, {}
-local function CloneBorder()
-    if not border then
-        border = CreateFrame("Frame", nil, frame)
-        border:SetAllPoints(frame)
+-- Copies of the real minimap's own pieces: border, sun/moon, tracking button, mail icon,
+-- coordinates ... Same texture/text, size and position, so the stand-in map looks like the
+-- minimap. Two groups:
+--   kids  = everything inside the minimap frame (hidden while scanning; in "replace" mode the
+--           whole real minimap is invisible, so these copies are what you see)
+--   over  = things attached to the minimap from outside (also hidden while scanning)
+-- The real buttons stay where they are, so clicking a copy clicks the real (invisible) one.
+local groups = { kids = { tex = {}, fs = {}, masks = {}, frames = {} },
+                 over = { tex = {}, fs = {}, masks = {}, frames = {} } }
+
+-- Stacking order of the copies: every copy sits in the SAME strata and frame level as the
+-- real piece it copies. Then the real buttons that stay visible during a scan (e.g. the
+-- sun/moon and the tracking button) are still drawn above the copied ring, as normal.
+local STRATA_NAMES = { "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG", "FULLSCREEN",
+                       "FULLSCREEN_DIALOG", "TOOLTIP" }
+local STRATA = {}
+for i, n in ipairs(STRATA_NAMES) do STRATA[n] = i end
+
+local function Container(g, key)
+    local c = g.frames[key]
+    if not c then
+        c = CreateFrame("Frame", nil, frame)
+        c:SetAllPoints(frame)
+        g.frames[key] = c
     end
-    border:SetFrameLevel(frame:GetFrameLevel() + 5)
-    for _, t in ipairs(borderTex) do t:Hide() end
+    local strata = frame.testMode and "HIGH" or STRATA_NAMES[math.floor(key / 100000)] or "LOW"
+    c:SetFrameStrata(strata)
+    c:SetFrameLevel(key % 100000)
+    c:Show()
+    return c
+end
+
+local function CloneInto(g, roots)
+    for _, t in ipairs(g.tex) do t:Hide() end
+    for _, f in ipairs(g.fs) do f:Hide() end
+    for _, c in pairs(g.frames) do c:Hide() end
+    g.nt, g.nf, g.nm = 0, 0, 0
     local l0, b0, w0 = Minimap:GetRect()
     if not l0 then return end
     local uiS = UIParent:GetEffectiveScale()
     local k0 = Minimap:GetEffectiveScale() / uiS
     l0, b0, w0 = l0 * k0, b0 * k0, w0 * k0
-    local n, seen = 0, {}
+    local baseLevel = Minimap:GetFrameLevel()
+    local seen = {}
+
+    local function Rect(region)
+        local l, b, w, h = region:GetRect()
+        if not l or w <= 0 or h <= 0 then return end
+        local k = region:GetEffectiveScale() / uiS
+        return l * k - l0, b * k - b0, w * k, h * k
+    end
+    local function LevelOf(region)
+        local p = region.GetParent and region:GetParent()
+        local strata = p and p.GetFrameStrata and p:GetFrameStrata() or "LOW"
+        local level = p and p.GetFrameLevel and p:GetFrameLevel() or baseLevel
+        return (STRATA[strata] or 2) * 100000 + math.min(level, 9999)
+    end
+
+    local function CopyTexture(region)
+        local layer, sub = region:GetDrawLayer()
+        if layer == "HIGHLIGHT" then return end              -- only shown on mouseover
+        local x, y, w, h = Rect(region)
+        if not x then return end
+        local big = w >= w0 * 0.6
+        if big and not ns.db.underlayBorder then return end
+        local atlas = region.GetAtlas and region:GetAtlas()
+        local tex = region:GetTexture()
+        if not atlas and not tex then return end
+        g.nt = g.nt + 1
+        local c = g.tex[g.nt]
+        if not c then c = frame:CreateTexture(); g.tex[g.nt] = c end
+        -- The ring/border goes right above our map and under everything else, so real
+        -- buttons that stay on screen during a scan (like the sun/moon) are never covered.
+        local key = big and ((STRATA[frame:GetFrameStrata()] or 2) * 100000 + frame:GetFrameLevel() + 1)
+            or LevelOf(region)
+        c:SetParent(Container(g, key))
+        c:SetDrawLayer(layer or "ARTWORK", sub or 0)
+        for i = c:GetNumMaskTextures(), 1, -1 do c:RemoveMaskTexture(c:GetMaskTexture(i)) end
+        if atlas then c:SetAtlas(atlas) else c:SetTexture(tex) end
+        c:SetTexCoord(region:GetTexCoord())
+        c:SetVertexColor(region:GetVertexColor())
+        c:SetAlpha(region:GetAlpha())
+        c:SetBlendMode(region:GetBlendMode())
+        pcall(function() c:SetRotation(region:GetRotation()) end)
+        c:ClearAllPoints()
+        c:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", x, y)
+        c:SetSize(w, h)
+        -- round icons are cut out with a mask: copy that too
+        pcall(function()
+            for i = 1, region:GetNumMaskTextures() do
+                local m = region:GetMaskTexture(i)
+                local mx, my, mw, mh = Rect(m)
+                local mt = m.GetTexture and m:GetTexture()
+                if mx and mt then
+                    g.nm = g.nm + 1
+                    local cm = g.masks[g.nm]
+                    if not cm then cm = frame:CreateMaskTexture(); g.masks[g.nm] = cm end
+                    cm:SetTexture(mt, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+                    cm:ClearAllPoints()
+                    cm:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", mx, my)
+                    cm:SetSize(mw, mh)
+                    c:AddMaskTexture(cm)
+                end
+            end
+        end)
+        c:Show()
+    end
+
+    local function CopyText(region)
+        local text = region:GetText()
+        if not text or text == "" then return end
+        local x, y, w, h = Rect(region)
+        if not x then return end
+        g.nf = g.nf + 1
+        local c = g.fs[g.nf]
+        if not c then c = frame:CreateFontString(); g.fs[g.nf] = c end
+        c:SetParent(Container(g, LevelOf(region)))
+        local layer, sub = region:GetDrawLayer()
+        c:SetDrawLayer(layer or "OVERLAY", sub or 0)
+        local font, size, flags = region:GetFont()
+        if not font then return end
+        c:SetFont(font, size * region:GetEffectiveScale() / uiS, flags)
+        c:SetTextColor(region:GetTextColor())
+        c:SetShadowColor(region:GetShadowColor())
+        c:SetShadowOffset(region:GetShadowOffset())
+        c:SetJustifyH(region:GetJustifyH())
+        c:SetJustifyV(region:GetJustifyV())
+        c:SetAlpha(region:GetAlpha())
+        c:ClearAllPoints()
+        c:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", x, y)
+        c:SetSize(w + 2, h)
+        c:SetText(text)
+        c:Show()
+    end
 
     local function Copy(region)
         if seen[region] then return end
         seen[region] = true
-        local ok = pcall(function()
-            if region:GetObjectType() ~= "Texture" or not region:IsShown() then return end
-            local l, b, w, h = region:GetRect()
-            if not l then return end
-            local k = region:GetEffectiveScale() / uiS
-            l, b, w, h = l * k, b * k, w * k, h * k
-            if w < w0 * 0.6 then return end                    -- not a border: skip
-            local atlas = region.GetAtlas and region:GetAtlas()
-            local tex = region:GetTexture()
-            if not atlas and not tex then return end
-            n = n + 1
-            local c = borderTex[n]
-            if not c then
-                c = border:CreateTexture(nil, "ARTWORK")
-                borderTex[n] = c
-            end
-            local layer, sub = region:GetDrawLayer()
-            c:SetDrawLayer(layer or "ARTWORK", sub or 0)
-            if atlas then c:SetAtlas(atlas) else c:SetTexture(tex) end
-            c:SetTexCoord(region:GetTexCoord())
-            c:SetVertexColor(region:GetVertexColor())
-            c:SetAlpha(region:GetAlpha())
-            c:SetBlendMode(region:GetBlendMode())
-            c:ClearAllPoints()
-            c:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", l - l0, b - b0)
-            c:SetSize(w, h)
-            c:Show()
+        pcall(function()
+            if not region:IsShown() then return end
+            local kind = region:GetObjectType()
+            if kind == "Texture" then CopyTexture(region)
+            elseif kind == "FontString" then CopyText(region) end
         end)
-        if not ok then return end
     end
     local function Walk(f, depth)
-        if not f or (f.IsForbidden and f:IsForbidden()) then return end
+        if not f or seen[f] then return end
+        local okUse = pcall(function()
+            if f.IsForbidden and f:IsForbidden() then error("forbidden") end
+        end)
+        if not okUse then return end
         local name = f.GetName and f:GetName()
-        if name and name:find("^NodeScanner") then return end   -- not our own button
+        if name == "NodeScannerUnderlay" then return end
+        local ot = f.GetObjectType and f:GetObjectType()
+        if ot == "Texture" or ot == "FontString" then Copy(f); return end
+        if not f.GetRegions then return end
+        seen[f] = true
+        if not f:IsShown() then return end
         for _, r in ipairs({ f:GetRegions() }) do Copy(r) end
         if depth > 0 then
-            for _, c in ipairs({ f:GetChildren() }) do
-                if c:IsShown() then Walk(c, depth - 1) end
-            end
+            for _, c in ipairs({ f:GetChildren() }) do Walk(c, depth - 1) end
         end
     end
-    pcall(Walk, Minimap, 3)
-    border:SetShown(ns.db.underlayBorder)
+    for _, root in ipairs(roots) do pcall(Walk, root, 4) end
 end
 
--- Called by the scanner BEFORE it moves the real minimap: take its exact place
-function ns.UnderlayShow()
-    if not ns.db.underlay then return end
-    if not frame then Build() end
+local function CloneKids()
+    -- the minimap's own regions and child frames (not the minimap frame itself twice)
+    CloneInto(groups.kids, { Minimap })
+end
+local function CloneOverlays()
+    local list = ns.MinimapOverlays and ns.MinimapOverlays() or {}
+    CloneInto(groups.over, list)
+end
+local function CloneAll()
+    ns.SafeCall(CloneKids)
+    ns.SafeCall(CloneOverlays)
+end
+local function HideGroup(g)
+    for _, c in pairs(g.frames) do c:Hide() end
+end
+
+----------------------------------------------------------------------
+-- "Replace the minimap": the stand-in map is shown all the time and the real minimap is
+-- made invisible (it stays in its place, so mouseover tooltips, clicks, zoom and its
+-- buttons still work - you just see our copies). Only where we have minimap terrain
+-- (Eastern Kingdoms and Kalimdor, outdoors); everywhere else the real minimap is shown.
+----------------------------------------------------------------------
+local function PlaceAtMinimap()
     local l, b, w, h = Minimap:GetRect()
-    if not l then return end
+    if not l then return false end
+    frame.testMode = false
     local s = Minimap:GetEffectiveScale() / UIParent:GetEffectiveScale()
     frame:ClearAllPoints()
     frame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", l * s, b * s)
     frame:SetSize(w * s, h * s)
     frame:SetFrameStrata(Minimap:GetFrameStrata())
-    frame:SetFrameLevel(math.max(0, Minimap:GetFrameLevel() - 1))
+    frame:SetFrameLevel(math.max(0, Minimap:GetFrameLevel() - 2))
+    frame.labelFrame:SetFrameLevel(frame:GetFrameLevel() + 200)
+    return true
+end
+
+local function StopReplacing()
+    if not replacing then return end
+    if ns.IsScanning and ns.IsScanning() then return end   -- after the scan
+    replacing = false
+    HideOwnTip()
+    Minimap:SetAlpha(1)
+    if frame then frame:Hide() end
+    updater:Hide()
+end
+
+function ns.ReplaceActive() return replacing end
+
+local function ReplaceTick()
+    if ns.IsScanning and ns.IsScanning() then return end        -- the scan owns the minimap now
+    local want = ns.db and ns.db.replaceMinimap and ns.db.underlay
+        and ns.db.minimapTerrain and not IsIndoors()
+    if not want then StopReplacing(); return end
+    if not frame then Build() end
+    if not PlaceAtMinimap() then return end
+    label:Hide()
+    ns.SafeCall(Update)
+    if frame.mode ~= "minimap terrain" then StopReplacing(); return end   -- no terrain here
+    ns.SafeCall(CloneKids)
+    HideGroup(groups.over)
+    frame:Show()
+    updater:Show()
+    if Minimap:GetAlpha() > 0 then Minimap:SetAlpha(0) end
+    replacing = true
+end
+C_Timer.NewTicker(0.2, function() ns.SafeCall(ReplaceTick) end)
+
+-- Called by the scanner BEFORE it moves the real minimap: take its exact place
+function ns.UnderlayShow()
+    if not ns.db.underlay then return end
+    if not frame then Build() end
+    if not PlaceAtMinimap() then return end
     label:SetShown(ns.db.scanLabel)
-    ns.SafeCall(CloneBorder)          -- before the minimap's own border is hidden
+    -- copy the minimap's pieces before the scanner hides them
+    CloneAll()
     ns.SafeCall(Update)
     frame:Show()
     updater:Show()
@@ -310,16 +534,20 @@ end
 -- /nscan maptest: show the stand-in map NEXT TO the real minimap for 15 s to compare
 function ns.UnderlayTest()
     if not frame then Build() end
+    if replacing then print("|cff33ff99Node Scanner|r: map test is not needed - the minimap is replaced"); return end
     local l, b, w, h = Minimap:GetRect()
     if not l then return end
     local s = Minimap:GetEffectiveScale() / UIParent:GetEffectiveScale()
+    frame.testMode = true
+    frame:SetFrameStrata("HIGH")
+    CloneAll()
     frame:ClearAllPoints()
     frame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMLEFT", l * s - 20, b * s)
     frame:SetSize(w * s, h * s)
     frame:SetFrameStrata("HIGH")
+    frame.labelFrame:SetFrameLevel(frame:GetFrameLevel() + 200)
     label:SetText("Stand-in map (test)")
     label:Show()
-    ns.SafeCall(CloneBorder)
     ns.SafeCall(Update)
     frame:Show()
     updater:Show()
@@ -333,6 +561,18 @@ end
 
 -- Called when the real minimap is back
 function ns.UnderlayHide()
+    if replacing and ns.db.replaceMinimap then
+        if label then label:Hide() end
+        HideGroup(groups.over)          -- the real ones are back
+        if frame then PlaceAtMinimap() end
+        return
+    end
     if frame then frame:Hide() end
     updater:Hide()
+end
+
+-- Options: switching modes
+function ns.ApplyMapMode()
+    if not ns.db.replaceMinimap then StopReplacing() end
+    ns.SafeCall(ReplaceTick)
 end

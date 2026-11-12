@@ -1,3 +1,5 @@
+<p align="center"><img src="NodeScanner-logo.png" width="160" alt="Node Scanner logo"></p>
+
 # Node Scanner
 
 A World of Warcraft: Forever addon that shows the gathering nodes on your minimap
@@ -23,7 +25,7 @@ the minimap back. Each scan:
 
 A scan never takes longer than the configured maximum (2 s by default), and it
 pauses when you are in combat, turning the camera, holding a mouse button, tabbed
-out, or standing next to a node so you can click it.
+out, using the interface, or standing next to a node so you can click it.
 
 ## Features
 
@@ -34,14 +36,23 @@ out, or standing next to a node so you can click it.
 - **Stand-in map:** while a scan has the real minimap away, a round map with the same
   border shows in its place - the real minimap terrain on Eastern Kingdoms and Kalimdor
   (world map art elsewhere), your arrow, node dots (treasure green, mobs red) and a
-  "Scanning for nodes" label
+  "Scanning for nodes" label. The minimap's buttons, sun/moon and coordinates are copied
+  onto it, so the swap is hard to notice
+- **Always use the stand-in map (option):** the real minimap is hidden for good and the
+  stand-in map is shown all the time - no swapping. Tooltips, clicks, zoom and the minimap
+  buttons still work. Town icons (mailbox, auctioneer ...) can't be shown, because the game
+  doesn't tell addons where they are. In caves and outside Eastern Kingdoms/Kalimdor the
+  real minimap is used. Hovering one of our dots shows the node's name in the normal
+  game tooltip
 - **All tracking types:** herbs, ore, treasure, beasts, humanoids, undead, demons,
   elementals, giants, dragonkin, hidden. Types your character doesn't have are greyed out.
   Node Scanner switches tracking between the ticked types (one per scan, or several
   together in one scan). Find Treasure stacks, so it is simply kept on.
 - **Mobs/NPCs:** one line per name, pointing at the nearest, with the count: `Defias Pillager (5)`
-- Pauses in combat, instances, indoors, near a node, with the mouse at the minimap,
-  optionally in rested areas - each can be switched in the settings
+- Pauses in combat, instances, indoors, near a node, with the mouse at the minimap or
+  over the interface, while a tooltip is shown or a game window is open (talents, flight
+  map ...), optionally in rested areas - each can be switched in the settings
+- Several sweep hits on the same minimap dot count as one node
 - Warning when Find Minerals / Find Herbs / Find Treasure is off - click to turn it on
 - Minimap button, settings window and debug log
 - Hovering a dot on the minimap adds it straight away
