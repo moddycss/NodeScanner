@@ -1,3 +1,4 @@
+-- Node Scanner - created with the help of AI (Claude). MIT licensed.
 -- NodeScanner main window: name - distance - arrow for the nearest nodes.
 
 local _, ns = ...

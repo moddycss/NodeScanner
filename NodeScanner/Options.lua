@@ -1,3 +1,4 @@
+-- Node Scanner - created with the help of AI (Claude). MIT licensed.
 -- NodeScanner Options window + minimap button.
 
 local _, ns = ...

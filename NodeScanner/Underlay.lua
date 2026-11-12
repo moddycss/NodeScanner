@@ -1,3 +1,4 @@
+-- Node Scanner - created with the help of AI (Claude). MIT licensed.
 -- Node Scanner Underlay: a stand-in map UNDER the real minimap.
 --
 -- While a scan moves the (invisible) real minimap away, this round map shows in its place:

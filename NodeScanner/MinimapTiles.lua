@@ -1,3 +1,4 @@
+-- Node Scanner - created with the help of AI (Claude). MIT licensed.
 -- Minimap terrain tiles: FileDataID of the minimap image for each 533.33-yard square.
 -- Generated from the continents' WDT files (MAID chunk) of the WoW Forever client.
 -- Index = y * 64 + x, same grid as the game's ADT tiles. No images are shipped, only numbers.
