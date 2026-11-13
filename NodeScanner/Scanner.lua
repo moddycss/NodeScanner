@@ -846,6 +846,15 @@ local function DoScan()
                 if x * x + y * y <= half * half then g[#g + 1] = { x, y, x * x + y * y } end
             end
         end
+        -- The square grid leaves a gap along the edge of the round minimap (on the axes
+        -- the last point is ~54 units out of 70). Add a ring of points close to the edge.
+        local ringR = half - 7
+        local count = math.ceil(2 * math.pi * ringR / SWEEP_STEP)
+        for k = 0, count - 1 do
+            local a = 2 * math.pi * k / count
+            local x, y = ringR * math.cos(a), ringR * math.sin(a)
+            g[#g + 1] = { x, y, ringR * ringR }
+        end
         table.sort(g, function(p1, p2) return p1[3] < p2[3] end)
         ns.sweepGrid, ns.sweepHalf, ns.sweepIndex = g, half, 1
     end

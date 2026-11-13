@@ -115,7 +115,7 @@ local function sec(v) return string.format("%d s", v) end
 ----------------------------------------------------------------------
 local function BuildPanel()
     panel = CreateFrame("Frame", "NodeScannerOptionsFrame", UIParent, "BackdropTemplate")
-    panel:SetSize(910, 730)
+    panel:SetSize(910, 790)
     panel:SetPoint("CENTER")
     panel:SetFrameStrata("DIALOG")
     panel:SetBackdrop({
@@ -192,9 +192,9 @@ local function BuildPanel()
     Check(panel, "Indoors (caves, buildings)", "scanIndoors", R - 4, -592)
     Header(panel, "Pause", R, -626)
     Check(panel, "Mouse at minimap", "pauseAtMinimap", R - 4, -644)
-    Check(panel, "Rested areas", "pauseResting", R + 126, -644)
+    Check(panel, "Rested areas", "pauseResting", R + 156, -644)
     Check(panel, "Mouse over interface", "pauseUI", R - 4, -668)
-    Check(panel, "Windows open", "pauseWindows", R + 126, -668)
+    Check(panel, "Windows open", "pauseWindows", R + 156, -668)
     Check(panel, "Tooltip shown", "pauseTooltip", R - 4, -692)
 
     -- Third column: tracking table. One line per tracking type:

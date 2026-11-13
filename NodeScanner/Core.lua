@@ -3,7 +3,7 @@
 -- The actual minimap scanning lives in Scanner.lua.
 
 local ADDON_NAME, ns = ...
-ns.VERSION = "1.3.0.1"   -- WoWpatch.Release.Major.Minor
+ns.VERSION = "1.3.0.2"   -- WoWpatch.Release.Major.Minor
 
 ns.defaults = {
     shown         = true,   -- main window visible
