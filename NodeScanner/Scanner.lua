@@ -680,6 +680,7 @@ function ns.WindowOpen()
 end
 
 local function CanScan(manual)
+    if ns.DISCONTINUED then return false, "discontinued (blocked by game build 70938)" end
     if job then return false, "already scanning" end
     local where = ns.PausedWhere()
     if where then return false, "paused (" .. where .. ")" end
@@ -1259,6 +1260,7 @@ end
 -- then read under different settings, each for a few frames, and put back.
 ----------------------------------------------------------------------
 function ns.Diagnose()
+    if ns.DISCONTINUED then print("|cff33ff99Node Scanner|r: " .. ns.DISCONTINUED_TEXT); return end
     if job or saved then print("|cff33ff99Node Scanner|r: wait until the scan is done"); return end
     print("|cff33ff99Node Scanner|r: diag - hover a yellow dot on the minimap and keep the mouse STILL. Starting in 4 s...")
     C_Timer.After(4, function()

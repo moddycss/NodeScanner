@@ -2,6 +2,12 @@
 
 # Node Scanner
 
+> **Discontinued (13 Nov 2026).** Since WoW Forever client build 70938 (12 Nov 2026), the
+> game hands the minimap's tooltip text to addons as a *secret value*, even under the real
+> mouse cursor. Node Scanner can no longer read what the minimap's dots are, so it can't work
+> any more. Version 1.4.0.0 switches scanning off for good and never touches the minimap. You
+> can remove the addon. The code stays here (MIT) for anyone curious about how it worked.
+
 A World of Warcraft: Forever addon that shows the gathering nodes on your minimap
 (ore, herbs, treasure chests) in a small window, with a rough distance and an arrow
 pointing towards each one.
