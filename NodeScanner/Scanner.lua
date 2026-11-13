@@ -679,7 +679,8 @@ function ns.WindowOpen()
     return found
 end
 
-local function CanScan()
+local function CanScan(manual)
+    if ns.DISCONTINUED then return false, "discontinued (blocked by game build 70938)" end
     if job then return false, "already scanning" end
     local where = ns.PausedWhere()
     if where then return false, "paused (" .. where .. ")" end
@@ -698,15 +699,15 @@ local function CanScan()
     if GameTooltip:IsShown() and GameTooltip:GetOwner() == UIParent and GameTooltip:GetAlpha() > 0 then
         return false, "mouse is over something in the world"
     end
-    if ns.db.pauseWindows then
+    if not manual and ns.db.pauseWindows then
         local w = ns.WindowOpen()
         if w then return false, "a window is open (" .. w .. ")" end
     end
-    if ns.db.pauseUI then
+    if not manual and ns.db.pauseUI then
         local over, what = ns.MouseOverUI()
         if over then return false, "mouse is over the interface (" .. tostring(what) .. ")" end
     end
-    if ns.db.pauseTooltip then
+    if not manual and ns.db.pauseTooltip then
         local tip = ns.TooltipShown()
         if tip then return false, "a tooltip is shown (" .. tip .. ")" end
     end
@@ -846,6 +847,15 @@ local function DoScan()
                 if x * x + y * y <= half * half then g[#g + 1] = { x, y, x * x + y * y } end
             end
         end
+        -- The square grid leaves a gap along the edge of the round minimap (on the axes
+        -- the last point is ~54 units out of 70). Add a ring of points close to the edge.
+        local ringR = half - 7
+        local count = math.ceil(2 * math.pi * ringR / SWEEP_STEP)
+        for k = 0, count - 1 do
+            local a = 2 * math.pi * k / count
+            local x, y = ringR * math.cos(a), ringR * math.sin(a)
+            g[#g + 1] = { x, y, ringR * ringR }
+        end
         table.sort(g, function(p1, p2) return p1[3] < p2[3] end)
         ns.sweepGrid, ns.sweepHalf, ns.sweepIndex = g, half, 1
     end
@@ -978,6 +988,10 @@ local function DoScan()
                 for _, name in ipairs(names) do
                     local k = ns.Classify(name)
                     if not k and ns.IsCreatureKind(kind) and ns.IsCreatureName(name) then k = kind end
+                    if not Wanted(k) then
+                        stats.other = stats.other or {}
+                        stats.other[name] = (stats.other[name] or 0) + 1
+                    end
                     if Wanted(k) then
                         -- Same node? Gathering nodes: anything of that name within one
                         -- hover area of this sweep point. Mobs: "Same node within".
@@ -1083,6 +1097,13 @@ local function DoScan()
         ns.unlocated = nil
         if stats.confirmed + stats.removed + stats.refined + stats.added > 0 then ns.stats.found = ns.stats.found + 1 end
 
+        if verbose then
+            local list = {}
+            for name, n in pairs(stats.other or {}) do list[#list + 1] = string.format("%s (%d)", name, n) end
+            table.sort(list)
+            ns.Log("INFO", "Also under the sweep (not wanted / not a node): %s",
+                #list > 0 and table.concat(list, ", ") or "nothing")
+        end
         if verbose or stats.added + stats.removed + stats.refined + (stats.merged or 0) > 0 then
             ns.Log("INFO", "Scan: %d reads, %.0f ms%s | %d confirmed, %d gone, %d new (rough), %d measured, %d merged, swept %d/%d",
                 probes, debugprofilestop() - t0, timedOut and " (time up)" or "",
@@ -1099,7 +1120,9 @@ local function DoScan()
 end
 
 function ns.ScanNow(manual)
-    local ok, why = CanScan()
+    -- A scan you start yourself (button, /nscan scan) ignores the interface pauses:
+    -- your mouse is on the button you just clicked.
+    local ok, why = CanScan(manual)
     if not ok then
         if manual then ns.Log("INFO", "Scan skipped: %s", why) end
         ns.stats.skipped[why] = (ns.stats.skipped[why] or 0) + 1
@@ -1229,4 +1252,116 @@ function ns.PrintStatus()
     for why, c in pairs(st.skipped) do list[#list + 1] = why .. " x" .. c end
     ns.Log("INFO", "  skipped: %s", #list > 0 and table.concat(list, ", ") or "never")
     ns.Log("INFO", "  nodes in window: %d", #ns.nodes)
+end
+
+----------------------------------------------------------------------
+-- /nscan diag: find out which part of the scan trick still works in this client.
+-- Hover a yellow dot on the real minimap and keep the mouse still; the minimap is
+-- then read under different settings, each for a few frames, and put back.
+----------------------------------------------------------------------
+function ns.Diagnose()
+    if ns.DISCONTINUED then print("|cff33ff99Node Scanner|r: " .. ns.DISCONTINUED_TEXT); return end
+    if job or saved then print("|cff33ff99Node Scanner|r: wait until the scan is done"); return end
+    print("|cff33ff99Node Scanner|r: diag - hover a yellow dot on the minimap and keep the mouse STILL. Starting in 4 s...")
+    C_Timer.After(4, function()
+        if job or saved then return end
+        local f = CreateFrame("Frame")
+        local es = mm:GetEffectiveScale()
+        local cx, cy = GetCursorPosition()
+        local mx, my = mm:GetCenter()
+        local dx, dy = cx / es - mx, cy / es - my
+        local orig = {
+            alpha = mm:GetAlpha(), strata = mm:GetFrameStrata(), points = {},
+            click = mm.IsMouseClickEnabled and mm:IsMouseClickEnabled(),
+            icon = GetIconScale(),
+        }
+        for i = 1, mm:GetNumPoints() do orig.points[i] = { mm:GetPoint(i) } end
+        local function home()
+            mm:ClearAllPoints()
+            for _, p in ipairs(orig.points) do mm:SetPoint(unpack(p)) end
+        end
+        local tests = {
+            { "normal", function() end, function() end },
+            { "alpha 0", function() mm:SetAlpha(0) end, function() mm:SetAlpha(orig.alpha) end },
+            { "icon scale 0", function() if mm.SetIconScale then mm:SetIconScale(0) end end,
+                              function() if mm.SetIconScale and orig.icon then mm:SetIconScale(orig.icon) end end },
+            { "strata TOOLTIP", function() mm:SetFrameStrata("TOOLTIP") end, function() mm:SetFrameStrata(orig.strata) end },
+            { "clicks off", function() if mm.SetMouseClickEnabled then mm:SetMouseClickEnabled(false) end end,
+                            function() if mm.SetMouseClickEnabled then mm:SetMouseClickEnabled(orig.click ~= false) end end },
+            { "moved (same spot)", function() Place(dx, dy) end, home },
+            { "moved + alpha 0", function() Place(dx, dy); mm:SetAlpha(0) end,
+                                 function() mm:SetAlpha(orig.alpha); home() end },
+            { "full scan setup", function() Prepare(0); Place(dx, dy) end, function() Restore() end },
+        }
+        local co = coroutine.create(function()
+            local function wait(n) for _ = 1, n do coroutine.yield() end end
+            ns.Log("INFO", "Diag: cursor at minimap offset %.0f, %.0f (half width %.0f), client build %s",
+                dx, dy, mm:GetWidth() / 2, select(2, GetBuildInfo()))
+            -- What does the game hand out right now, raw?
+            wait(2)
+            local function Describe(v)
+                if v == nil then return "nil" end
+                if ns.IsSecret(v) then return "SECRET " .. type(v) end
+                return type(v) == "string" and ('"' .. v .. '"') or type(v)
+            end
+            local data = C_TooltipInfo.GetMinimapMouseover()
+            local lines = data and not ns.IsSecret(data) and data.lines
+            local first = lines and lines[1]
+            ns.Log("INFO", "Diag raw: data=%s lines=%s first=%s leftText=%s",
+                Describe(data), lines and #lines or "-", Describe(first),
+                first and not ns.IsSecret(first) and Describe(first.leftText) or "-")
+            -- every field the game hands out: which ones are NOT secret?
+            local function Dump(label, tbl)
+                if not tbl or ns.IsSecret(tbl) then return end
+                local parts = {}
+                for k, v in pairs(tbl) do
+                    if type(v) == "table" and not ns.IsSecret(v) then
+                        local sub = {}
+                        for k2, v2 in pairs(v) do sub[#sub + 1] = tostring(k2) .. "=" .. Describe(v2) end
+                        parts[#parts + 1] = tostring(k) .. "={" .. table.concat(sub, " ") .. "}"
+                    else
+                        parts[#parts + 1] = tostring(k) .. "=" .. Describe(v)
+                    end
+                end
+                table.sort(parts)
+                ns.Log("INFO", "Diag %s: %s", label, table.concat(parts, "  "))
+            end
+            Dump("data", data)
+            Dump("line1", first)
+            -- and on an empty spot (the middle of the minimap is the player arrow; use far off-map)
+            Place(5000, 5000)
+            wait(3)
+            local empty = C_TooltipInfo.GetMinimapMouseover()
+            home()
+            wait(2)
+            ns.Log("INFO", "Diag empty spot: data=%s lines=%s", Describe(empty),
+                empty and not ns.IsSecret(empty) and empty.lines and #empty.lines or "-")
+            local owner = GameTooltip:GetOwner()
+            local t1 = _G.GameTooltipTextLeft1
+            ns.Log("INFO", "Diag tooltip: shown=%s owner=%s line1=%s mouseOverMinimap=%s",
+                tostring(GameTooltip:IsShown()),
+                owner and (owner.GetDebugName and owner:GetDebugName() or "?") or "none",
+                t1 and Describe(t1:GetText()) or "-", tostring(mm:IsMouseOver()))
+            for _, t in ipairs(tests) do
+                local ok = pcall(t[2])
+                wait(3)
+                local names = ReadNames()
+                pcall(t[3])
+                wait(3)
+                local back = ReadNames()
+                ns.Log("INFO", "Diag %-18s %s -> %s   (afterwards: %s)", t[1] .. ":", ok and "" or "(error)",
+                    #names > 0 and table.concat(names, ", ") or "NOTHING",
+                    #back > 0 and table.concat(back, ", ") or "nothing")
+            end
+            ns.Log("INFO", "Diag done")
+        end)
+        f:SetScript("OnUpdate", function(self)
+            local ok, err = coroutine.resume(co)
+            if not ok or coroutine.status(co) == "dead" then
+                self:SetScript("OnUpdate", nil)
+                if not ok then ns.Log("ERR", "Diag failed: %s", tostring(err)); pcall(Restore); pcall(home) end
+                print("|cff33ff99Node Scanner|r: diag done - see /nscan debug")
+            end
+        end)
+    end)
 end

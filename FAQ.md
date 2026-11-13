@@ -4,6 +4,23 @@ Answers to the questions people ask most, and the reasons behind Node Scanner's 
 
 ---
 
+## Why was Node Scanner discontinued?
+
+Node Scanner learned what the minimap's dots were by reading the minimap's own mouseover
+tooltip (`C_TooltipInfo.GetMinimapMouseover()`). Blizzard restricted this twice:
+
+- **Build 70862:** the minimap only answers for the point under the *real* mouse cursor.
+  Node Scanner worked around this by moving the minimap under your cursor.
+- **Build 70938 (12 Nov 2026):** the tooltip text is now a *secret value*. Addons can see
+  that there is a line of text, but not what it says, not even under the real cursor.
+
+Without the names there's no reliable way to tell ore from herbs, chests or other icons.
+Blizzard clearly doesn't want addons reading the minimap this way any more, so the addon was
+discontinued instead of being built around another gap that would probably be closed too.
+The answers below describe how it worked before that.
+
+---
+
 ## How it works
 
 ### Why does Node Scanner move the minimap?

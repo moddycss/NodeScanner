@@ -502,7 +502,7 @@ function ns.ReplaceActive() return replacing end
 
 local function ReplaceTick()
     if ns.IsScanning and ns.IsScanning() then return end        -- the scan owns the minimap now
-    local want = ns.db and ns.db.replaceMinimap and ns.db.underlay
+    local want = not ns.DISCONTINUED and ns.db and ns.db.replaceMinimap and ns.db.underlay
         and ns.db.minimapTerrain and not IsIndoors()
     if not want then StopReplacing(); return end
     if not frame then Build() end
@@ -521,7 +521,7 @@ C_Timer.NewTicker(0.2, function() ns.SafeCall(ReplaceTick) end)
 
 -- Called by the scanner BEFORE it moves the real minimap: take its exact place
 function ns.UnderlayShow()
-    if not ns.db.underlay then return end
+    if ns.DISCONTINUED or not ns.db.underlay then return end
     if not frame then Build() end
     if not PlaceAtMinimap() then return end
     label:SetShown(ns.db.scanLabel)

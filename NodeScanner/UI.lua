@@ -112,6 +112,7 @@ local function Refresh()
     local db = ns.db
     local where = ns.PausedWhere and ns.PausedWhere()
     local t = where and ("Gathering Nodes |cff999999- paused (" .. where .. ")|r") or "Gathering Nodes"
+    if ns.DISCONTINUED then t = "Gathering Nodes |cffff6060- discontinued (blocked by the game)|r" end
     if t ~= lastTitle then titleText:SetText(t); lastTitle = t end
     local _, px, py = ns.GetPlayerYards()
 

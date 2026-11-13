@@ -3,7 +3,14 @@
 -- The actual minimap scanning lives in Scanner.lua.
 
 local ADDON_NAME, ns = ...
-ns.VERSION = "1.3.0.1"   -- WoWpatch.Release.Major.Minor
+ns.VERSION = "1.4.0.0"   -- WoWpatch.Release.Major.Minor
+
+-- DISCONTINUED. Since game build 70938 (12 Nov 2026) the minimap's tooltip text is a
+-- "secret value": addons can no longer read the names of minimap dots, not even under
+-- the real cursor. Node Scanner can't work without them, so scanning is switched off
+-- for good and the minimap is never touched. See README.md.
+ns.DISCONTINUED = true
+ns.DISCONTINUED_TEXT = "Node Scanner is discontinued: since game build 70938 the minimap no longer tells addons what its dots are."
 
 ns.defaults = {
     shown         = true,   -- main window visible
@@ -373,6 +380,11 @@ ev:SetScript("OnEvent", function(self, _, name)
     local version, build, _, toc = GetBuildInfo()
     ns.Log("INFO", "Node Scanner %s loaded. Client %s (build %s), interface %s",
         ns.VERSION, tostring(version), tostring(build), tostring(toc))
+    if ns.DISCONTINUED then
+        ns.db.replaceMinimap = false                    -- never hide the real minimap
+        ns.Log("WARN", "%s", ns.DISCONTINUED_TEXT)
+        print("|cff33ff99Node Scanner|r: " .. ns.DISCONTINUED_TEXT .. " You can remove the addon.")
+    end
 end)
 
 ----------------------------------------------------------------------
@@ -395,6 +407,8 @@ SlashCmdList.NODESCANNER = function(msg)
         print("|cff33ff99Node Scanner|r: minimap put back.")
     elseif cmd == "maptest" then
         ns.UnderlayTest()
+    elseif cmd == "diag" then
+        ns.Diagnose()
     elseif cmd == "status" then
         ns.PrintStatus()
         ns.ToggleDebug()
