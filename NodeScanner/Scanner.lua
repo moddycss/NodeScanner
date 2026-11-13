@@ -679,7 +679,7 @@ function ns.WindowOpen()
     return found
 end
 
-local function CanScan()
+local function CanScan(manual)
     if job then return false, "already scanning" end
     local where = ns.PausedWhere()
     if where then return false, "paused (" .. where .. ")" end
@@ -698,15 +698,15 @@ local function CanScan()
     if GameTooltip:IsShown() and GameTooltip:GetOwner() == UIParent and GameTooltip:GetAlpha() > 0 then
         return false, "mouse is over something in the world"
     end
-    if ns.db.pauseWindows then
+    if not manual and ns.db.pauseWindows then
         local w = ns.WindowOpen()
         if w then return false, "a window is open (" .. w .. ")" end
     end
-    if ns.db.pauseUI then
+    if not manual and ns.db.pauseUI then
         local over, what = ns.MouseOverUI()
         if over then return false, "mouse is over the interface (" .. tostring(what) .. ")" end
     end
-    if ns.db.pauseTooltip then
+    if not manual and ns.db.pauseTooltip then
         local tip = ns.TooltipShown()
         if tip then return false, "a tooltip is shown (" .. tip .. ")" end
     end
@@ -987,6 +987,10 @@ local function DoScan()
                 for _, name in ipairs(names) do
                     local k = ns.Classify(name)
                     if not k and ns.IsCreatureKind(kind) and ns.IsCreatureName(name) then k = kind end
+                    if not Wanted(k) then
+                        stats.other = stats.other or {}
+                        stats.other[name] = (stats.other[name] or 0) + 1
+                    end
                     if Wanted(k) then
                         -- Same node? Gathering nodes: anything of that name within one
                         -- hover area of this sweep point. Mobs: "Same node within".
@@ -1092,6 +1096,13 @@ local function DoScan()
         ns.unlocated = nil
         if stats.confirmed + stats.removed + stats.refined + stats.added > 0 then ns.stats.found = ns.stats.found + 1 end
 
+        if verbose then
+            local list = {}
+            for name, n in pairs(stats.other or {}) do list[#list + 1] = string.format("%s (%d)", name, n) end
+            table.sort(list)
+            ns.Log("INFO", "Also under the sweep (not wanted / not a node): %s",
+                #list > 0 and table.concat(list, ", ") or "nothing")
+        end
         if verbose or stats.added + stats.removed + stats.refined + (stats.merged or 0) > 0 then
             ns.Log("INFO", "Scan: %d reads, %.0f ms%s | %d confirmed, %d gone, %d new (rough), %d measured, %d merged, swept %d/%d",
                 probes, debugprofilestop() - t0, timedOut and " (time up)" or "",
@@ -1108,7 +1119,9 @@ local function DoScan()
 end
 
 function ns.ScanNow(manual)
-    local ok, why = CanScan()
+    -- A scan you start yourself (button, /nscan scan) ignores the interface pauses:
+    -- your mouse is on the button you just clicked.
+    local ok, why = CanScan(manual)
     if not ok then
         if manual then ns.Log("INFO", "Scan skipped: %s", why) end
         ns.stats.skipped[why] = (ns.stats.skipped[why] or 0) + 1
