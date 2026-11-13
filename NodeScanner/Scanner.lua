@@ -1308,6 +1308,32 @@ function ns.Diagnose()
             ns.Log("INFO", "Diag raw: data=%s lines=%s first=%s leftText=%s",
                 Describe(data), lines and #lines or "-", Describe(first),
                 first and not ns.IsSecret(first) and Describe(first.leftText) or "-")
+            -- every field the game hands out: which ones are NOT secret?
+            local function Dump(label, tbl)
+                if not tbl or ns.IsSecret(tbl) then return end
+                local parts = {}
+                for k, v in pairs(tbl) do
+                    if type(v) == "table" and not ns.IsSecret(v) then
+                        local sub = {}
+                        for k2, v2 in pairs(v) do sub[#sub + 1] = tostring(k2) .. "=" .. Describe(v2) end
+                        parts[#parts + 1] = tostring(k) .. "={" .. table.concat(sub, " ") .. "}"
+                    else
+                        parts[#parts + 1] = tostring(k) .. "=" .. Describe(v)
+                    end
+                end
+                table.sort(parts)
+                ns.Log("INFO", "Diag %s: %s", label, table.concat(parts, "  "))
+            end
+            Dump("data", data)
+            Dump("line1", first)
+            -- and on an empty spot (the middle of the minimap is the player arrow; use far off-map)
+            Place(5000, 5000)
+            wait(3)
+            local empty = C_TooltipInfo.GetMinimapMouseover()
+            home()
+            wait(2)
+            ns.Log("INFO", "Diag empty spot: data=%s lines=%s", Describe(empty),
+                empty and not ns.IsSecret(empty) and empty.lines and #empty.lines or "-")
             local owner = GameTooltip:GetOwner()
             local t1 = _G.GameTooltipTextLeft1
             ns.Log("INFO", "Diag tooltip: shown=%s owner=%s line1=%s mouseOverMinimap=%s",

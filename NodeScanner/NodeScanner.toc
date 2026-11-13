@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## Title: Node Scanner
 ## Notes: Shows the nearest gathering nodes from the minimap with distance and an arrow.
-## Version: 1.3.0.5
+## Version: 1.3.0.6
 ## SavedVariables: NodeScannerDB
 # Created with the help of AI (Claude).
 
