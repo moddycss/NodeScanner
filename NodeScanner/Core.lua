@@ -3,7 +3,7 @@
 -- The actual minimap scanning lives in Scanner.lua.
 
 local ADDON_NAME, ns = ...
-ns.VERSION = "1.3.0.3"   -- WoWpatch.Release.Major.Minor
+ns.VERSION = "1.3.0.4"   -- WoWpatch.Release.Major.Minor
 
 ns.defaults = {
     shown         = true,   -- main window visible
@@ -395,6 +395,8 @@ SlashCmdList.NODESCANNER = function(msg)
         print("|cff33ff99Node Scanner|r: minimap put back.")
     elseif cmd == "maptest" then
         ns.UnderlayTest()
+    elseif cmd == "diag" then
+        ns.Diagnose()
     elseif cmd == "status" then
         ns.PrintStatus()
         ns.ToggleDebug()

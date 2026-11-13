@@ -1252,3 +1252,69 @@ function ns.PrintStatus()
     ns.Log("INFO", "  skipped: %s", #list > 0 and table.concat(list, ", ") or "never")
     ns.Log("INFO", "  nodes in window: %d", #ns.nodes)
 end
+
+----------------------------------------------------------------------
+-- /nscan diag: find out which part of the scan trick still works in this client.
+-- Hover a yellow dot on the real minimap and keep the mouse still; the minimap is
+-- then read under different settings, each for a few frames, and put back.
+----------------------------------------------------------------------
+function ns.Diagnose()
+    if job or saved then print("|cff33ff99Node Scanner|r: wait until the scan is done"); return end
+    print("|cff33ff99Node Scanner|r: diag - hover a yellow dot on the minimap and keep the mouse STILL. Starting in 4 s...")
+    C_Timer.After(4, function()
+        if job or saved then return end
+        local f = CreateFrame("Frame")
+        local es = mm:GetEffectiveScale()
+        local cx, cy = GetCursorPosition()
+        local mx, my = mm:GetCenter()
+        local dx, dy = cx / es - mx, cy / es - my
+        local orig = {
+            alpha = mm:GetAlpha(), strata = mm:GetFrameStrata(), points = {},
+            click = mm.IsMouseClickEnabled and mm:IsMouseClickEnabled(),
+            icon = GetIconScale(),
+        }
+        for i = 1, mm:GetNumPoints() do orig.points[i] = { mm:GetPoint(i) } end
+        local function home()
+            mm:ClearAllPoints()
+            for _, p in ipairs(orig.points) do mm:SetPoint(unpack(p)) end
+        end
+        local tests = {
+            { "normal", function() end, function() end },
+            { "alpha 0", function() mm:SetAlpha(0) end, function() mm:SetAlpha(orig.alpha) end },
+            { "icon scale 0", function() if mm.SetIconScale then mm:SetIconScale(0) end end,
+                              function() if mm.SetIconScale and orig.icon then mm:SetIconScale(orig.icon) end end },
+            { "strata TOOLTIP", function() mm:SetFrameStrata("TOOLTIP") end, function() mm:SetFrameStrata(orig.strata) end },
+            { "clicks off", function() if mm.SetMouseClickEnabled then mm:SetMouseClickEnabled(false) end end,
+                            function() if mm.SetMouseClickEnabled then mm:SetMouseClickEnabled(orig.click ~= false) end end },
+            { "moved (same spot)", function() Place(dx, dy) end, home },
+            { "moved + alpha 0", function() Place(dx, dy); mm:SetAlpha(0) end,
+                                 function() mm:SetAlpha(orig.alpha); home() end },
+            { "full scan setup", function() Prepare(0); Place(dx, dy) end, function() Restore() end },
+        }
+        local co = coroutine.create(function()
+            local function wait(n) for _ = 1, n do coroutine.yield() end end
+            ns.Log("INFO", "Diag: cursor at minimap offset %.0f, %.0f (half width %.0f), client build %s",
+                dx, dy, mm:GetWidth() / 2, select(2, GetBuildInfo()))
+            for _, t in ipairs(tests) do
+                local ok = pcall(t[2])
+                wait(3)
+                local names = ReadNames()
+                pcall(t[3])
+                wait(3)
+                local back = ReadNames()
+                ns.Log("INFO", "Diag %-18s %s -> %s   (afterwards: %s)", t[1] .. ":", ok and "" or "(error)",
+                    #names > 0 and table.concat(names, ", ") or "NOTHING",
+                    #back > 0 and table.concat(back, ", ") or "nothing")
+            end
+            ns.Log("INFO", "Diag done")
+        end)
+        f:SetScript("OnUpdate", function(self)
+            local ok, err = coroutine.resume(co)
+            if not ok or coroutine.status(co) == "dead" then
+                self:SetScript("OnUpdate", nil)
+                if not ok then ns.Log("ERR", "Diag failed: %s", tostring(err)); pcall(Restore); pcall(home) end
+                print("|cff33ff99Node Scanner|r: diag done - see /nscan debug")
+            end
+        end)
+    end)
+end
