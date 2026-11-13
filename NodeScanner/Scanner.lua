@@ -1295,6 +1295,25 @@ function ns.Diagnose()
             local function wait(n) for _ = 1, n do coroutine.yield() end end
             ns.Log("INFO", "Diag: cursor at minimap offset %.0f, %.0f (half width %.0f), client build %s",
                 dx, dy, mm:GetWidth() / 2, select(2, GetBuildInfo()))
+            -- What does the game hand out right now, raw?
+            wait(2)
+            local function Describe(v)
+                if v == nil then return "nil" end
+                if ns.IsSecret(v) then return "SECRET " .. type(v) end
+                return type(v) == "string" and ('"' .. v .. '"') or type(v)
+            end
+            local data = C_TooltipInfo.GetMinimapMouseover()
+            local lines = data and not ns.IsSecret(data) and data.lines
+            local first = lines and lines[1]
+            ns.Log("INFO", "Diag raw: data=%s lines=%s first=%s leftText=%s",
+                Describe(data), lines and #lines or "-", Describe(first),
+                first and not ns.IsSecret(first) and Describe(first.leftText) or "-")
+            local owner = GameTooltip:GetOwner()
+            local t1 = _G.GameTooltipTextLeft1
+            ns.Log("INFO", "Diag tooltip: shown=%s owner=%s line1=%s mouseOverMinimap=%s",
+                tostring(GameTooltip:IsShown()),
+                owner and (owner.GetDebugName and owner:GetDebugName() or "?") or "none",
+                t1 and Describe(t1:GetText()) or "-", tostring(mm:IsMouseOver()))
             for _, t in ipairs(tests) do
                 local ok = pcall(t[2])
                 wait(3)
